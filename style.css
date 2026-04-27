@@ -1,0 +1,104 @@
+body {
+  margin: 0;
+  overflow: hidden;
+  font-family: "Segoe UI", Tahoma, sans-serif;
+  background: #0f172a;
+}
+
+canvas {
+  display: block;
+}
+
+#hud {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#infoPanel {
+  padding: 10px 15px;
+  background: rgba(15, 23, 42, 0.72);
+  color: white;
+  border-radius: 8px;
+  max-width: 260px;
+}
+
+#orbitToggle {
+  width: fit-content;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: rgba(30, 41, 59, 0.9);
+  color: #e2e8f0;
+  padding: 10px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+#orbitToggle[aria-pressed="true"] {
+  background: rgba(14, 116, 144, 0.9);
+  border-color: rgba(103, 232, 249, 0.6);
+}
+
+#sidebar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 320px;
+  height: 100vh;
+  box-sizing: border-box;
+  padding: 24px 20px;
+  background: rgba(2, 6, 23, 0.86);
+  color: #e2e8f0;
+  z-index: 25;
+  backdrop-filter: blur(6px);
+}
+
+#sidebar h2 {
+  margin: 0 0 8px;
+  font-size: 1.2rem;
+}
+
+#componentHint {
+  margin: 0 0 16px;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+
+#componentDetails {
+  margin: 0;
+  display: grid;
+  gap: 14px;
+}
+
+#componentDetails div {
+  margin: 0;
+}
+
+#componentDetails dt {
+  color: #67e8f9;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+#componentDetails dd {
+  margin: 0;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+@media (max-width: 900px) {
+  #sidebar {
+    width: min(100vw, 340px);
+    height: auto;
+    max-height: 48vh;
+    top: auto;
+    bottom: 0;
+    border-top-left-radius: 14px;
+  }
+}

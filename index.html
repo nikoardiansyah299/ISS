@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Eksplorasi 3D ISS</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./node_modules/three/build/three.module.js",
+        "three/addons/": "./node_modules/three/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="hud">
+    <div id="infoPanel">Klik modul ISS</div>
+    <button id="orbitToggle" type="button" aria-pressed="false">Pause ISS Orbit</button>
+  </div>
+
+  <aside id="sidebar" aria-live="polite">
+    <h2>ISS Component</h2>
+    <p id="componentHint">Pilih komponen ISS untuk lihat detail.</p>
+
+    <dl id="componentDetails">
+      <div>
+        <dt>Nama</dt>
+        <dd id="componentName">-</dd>
+      </div>
+      <div>
+        <dt>Kategori</dt>
+        <dd id="componentCategory">-</dd>
+      </div>
+      <div>
+        <dt>Tipe</dt>
+        <dd id="componentType">-</dd>
+      </div>
+      <div>
+        <dt>Hierarchy</dt>
+        <dd id="componentPath">-</dd>
+      </div>
+      <div>
+        <dt>Posisi Lokal</dt>
+        <dd id="componentPosition">-</dd>
+      </div>
+      <div>
+        <dt>Keterangan</dt>
+        <dd id="componentDescription">-</dd>
+      </div>
+    </dl>
+  </aside>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
