@@ -24,21 +24,200 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 
 // Lighting
-const light = new THREE.DirectionalLight(0xffffff, 1);
+const light = new THREE.DirectionalLight(0xffffff, 1.1);
 light.position.set(5, 5, 5);
 scene.add(light);
+scene.add(light.target);
 
-scene.add(new THREE.AmbientLight(0x7f8ea3, 0.7));
+const ambientLight = new THREE.AmbientLight(0x7f8ea3, 0.22);
+scene.add(ambientLight);
 
 // Bumi
-const earthGeometry = new THREE.SphereGeometry(2, 32, 32);
-const earthMaterial = new THREE.MeshStandardMaterial({
-  color: 0x1f5ea8,
-  roughness: 0.9,
-  metalness: 0.0
+const textureLoader = new THREE.TextureLoader();
+const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
+
+function loadEarthTexture(path, colorSpace = THREE.SRGBColorSpace) {
+  const texture = textureLoader.load(path);
+  texture.colorSpace = colorSpace;
+  texture.anisotropy = maxAnisotropy;
+  return texture;
+}
+
+const earthDayMap = loadEarthTexture('./image/day_bumi.jpg', THREE.SRGBColorSpace);
+const earthNightMap = loadEarthTexture('./image/night_bumi.jpg', THREE.SRGBColorSpace);
+const earthNormalMap = loadEarthTexture('./image/normal_bumi.jpg', THREE.NoColorSpace);
+const earthSpecularMap = loadEarthTexture('./image/specular_bumi.jpg', THREE.NoColorSpace);
+const earthCloudMap = loadEarthTexture('./image/cloud_bumi.jpg', THREE.SRGBColorSpace);
+const sunMap = loadEarthTexture('./image/matahari.jpg', THREE.SRGBColorSpace);
+
+const earthGeometry = new THREE.SphereGeometry(2.6, 64, 64);
+const earthMaterial = new THREE.MeshPhysicalMaterial({
+  map: earthDayMap,
+  normalMap: earthNormalMap,
+  roughness: 0.8,
+  metalness: 0.0,
+  specularIntensity: 0.6,
+  specularIntensityMap: earthSpecularMap,
 });
 const earth = new THREE.Mesh(earthGeometry, earthMaterial);
+const earthNightGeometry = new THREE.SphereGeometry(2.601, 64, 64);
+const earthNightMaterial = new THREE.ShaderMaterial({
+  uniforms: {
+    nightMap: { value: earthNightMap },
+    lightDirection: { value: new THREE.Vector3() },
+    intensity: { value: 1.0 },
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    varying float vNight;
+    uniform vec3 lightDirection;
+
+    void main() {
+      vUv = uv;
+      vec3 worldNormal = normalize(mat3(modelMatrix) * normal);
+      float dotNL = dot(worldNormal, normalize(lightDirection));
+      vNight = smoothstep(0.0, 0.25, -dotNL);
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform sampler2D nightMap;
+    uniform float intensity;
+    varying vec2 vUv;
+    varying float vNight;
+
+    void main() {
+      vec3 color = texture2D(nightMap, vUv).rgb * intensity;
+      gl_FragColor = vec4(color * vNight, vNight);
+    }
+  `,
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+});
+earthNightMaterial.toneMapped = false;
+const earthNight = new THREE.Mesh(earthNightGeometry, earthNightMaterial);
+earthNight.renderOrder = 1;
+earth.add(earthNight);
+const cloudGeometry = new THREE.SphereGeometry(2.62, 64, 64);
+const cloudMaterial = new THREE.MeshStandardMaterial({
+  map: earthCloudMap,
+  transparent: true,
+  opacity: 0.7,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+});
+const earthClouds = new THREE.Mesh(cloudGeometry, cloudMaterial);
+earthClouds.renderOrder = 2;
+earth.add(earthClouds);
 scene.add(earth);
+
+const sunVertexShader = `
+  varying vec2 vUv;
+
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const sunFragmentShader = `
+  uniform sampler2D uTexture;
+  uniform vec3 uInnerColor;
+  uniform vec3 uOuterColor;
+  uniform float uIntensity;
+  uniform float uTime;
+  uniform float uUseTexture;
+  uniform float uAlpha;
+  uniform float uCorona;
+
+  varying vec2 vUv;
+
+  void main() {
+    vec2 centered = vUv - 0.5;
+    float r = length(centered) * 2.0;
+    float grad = smoothstep(0.0, 1.0, r);
+    float ripple = 0.015 * sin(10.0 * r - uTime * 1.2);
+    grad = clamp(grad + ripple, 0.0, 1.0);
+
+    vec3 color = mix(uInnerColor, uOuterColor, grad);
+    vec3 tex = texture2D(uTexture, vUv).rgb;
+    color = mix(color, color * (0.75 + tex.r * 0.6), uUseTexture);
+
+    float edge = smoothstep(0.25, 1.0, r);
+    float fade = 1.0 - smoothstep(0.7, 1.0, r);
+    float coronaAlpha = edge * fade;
+    float alpha = mix(1.0, coronaAlpha, uCorona) * uAlpha;
+
+    gl_FragColor = vec4(color * uIntensity, alpha);
+  }
+`;
+
+const sunTimeUniform = { value: 0 };
+const sunTextureUniform = { value: sunMap };
+const sunRadius = 1.6;
+const sunSegments = 48;
+const sunGeometry = new THREE.SphereGeometry(sunRadius, sunSegments, sunSegments);
+const sunCoronaGeometry = new THREE.SphereGeometry(sunRadius * 1.12, sunSegments, sunSegments);
+
+const sunCoreMaterial = new THREE.ShaderMaterial({
+  uniforms: {
+    uTexture: sunTextureUniform,
+    uInnerColor: { value: new THREE.Color(0xfff1a8) },
+    uOuterColor: { value: new THREE.Color(0xff7a1c) },
+    uIntensity: { value: 1.25 },
+    uTime: sunTimeUniform,
+    uUseTexture: { value: 1.0 },
+    uAlpha: { value: 1.0 },
+    uCorona: { value: 0.0 },
+  },
+  vertexShader: sunVertexShader,
+  fragmentShader: sunFragmentShader,
+  transparent: true,
+});
+sunCoreMaterial.toneMapped = false;
+
+const sunCoronaMaterial = new THREE.ShaderMaterial({
+  uniforms: {
+    uTexture: sunTextureUniform,
+    uInnerColor: { value: new THREE.Color(0xffd27a) },
+    uOuterColor: { value: new THREE.Color(0xff4a00) },
+    uIntensity: { value: 1.0 },
+    uTime: sunTimeUniform,
+    uUseTexture: { value: 0.0 },
+    uAlpha: { value: 0.55 },
+    uCorona: { value: 1.0 },
+  },
+  vertexShader: sunVertexShader,
+  fragmentShader: sunFragmentShader,
+  transparent: true,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false,
+  side: THREE.DoubleSide,
+});
+sunCoronaMaterial.toneMapped = false;
+
+const sunGroup = new THREE.Group();
+const sunCore = new THREE.Mesh(sunGeometry, sunCoreMaterial);
+const sunCorona = new THREE.Mesh(sunCoronaGeometry, sunCoronaMaterial);
+sunCore.renderOrder = 3;
+sunCorona.renderOrder = 4;
+sunCore.userData.skipShading = true;
+sunCorona.userData.skipShading = true;
+sunGroup.add(sunCore, sunCorona);
+sunGroup.position.set(12, 6, -10);
+scene.add(sunGroup);
+
+light.position.copy(sunGroup.position);
+
+const earthLightTarget = new THREE.Vector3();
+const earthLightDirection = new THREE.Vector3();
+
+function updateEarthNightLighting() {
+  light.target.getWorldPosition(earthLightTarget);
+  earthLightDirection.copy(light.position).sub(earthLightTarget).normalize();
+  earthNightMaterial.uniforms.lightDirection.value.copy(earthLightDirection);
+}
 
 // ISS
 const issOrbit = new THREE.Group();
@@ -51,8 +230,18 @@ dracoLoader.setDecoderPath('./node_modules/three/examples/jsm/libs/draco/');
 loader.setDRACOLoader(dracoLoader);
 loader.setMeshoptDecoder(MeshoptDecoder);
 
+const hud = document.getElementById('hud');
 const infoPanel = document.getElementById('infoPanel');
 const orbitToggle = document.getElementById('orbitToggle');
+let shaderToggle = document.getElementById('shaderToggle');
+if (!shaderToggle && hud) {
+  shaderToggle = document.createElement('button');
+  shaderToggle.id = 'shaderToggle';
+  shaderToggle.type = 'button';
+  shaderToggle.dataset.mode = 'default';
+  shaderToggle.textContent = 'Shader: Default';
+  hud.appendChild(shaderToggle);
+}
 const componentHint = document.getElementById('componentHint');
 const componentName = document.getElementById('componentName');
 const componentCategory = document.getElementById('componentCategory');
@@ -63,9 +252,17 @@ const componentDescription = document.getElementById('componentDescription');
 
 let orbitPaused = false;
 let selectedObject = null;
+let selectedCategory = null;
 let selectedMaterials = [];
 const glowColor = new THREE.Color(0x64ffb0);
 const glowClock = new THREE.Clock();
+const sunClock = new THREE.Clock();
+const SHADING_MODES = ['default', 'gouraud', 'phong'];
+let shadingModeIndex = 0;
+let shadingMode = 'default';
+const originalMaterials = new Map();
+const gouraudMaterialCache = new Map();
+const phongMaterialCache = new Map();
 
 const CLICKABLE_CATEGORIES = [
   {
@@ -104,6 +301,14 @@ function setOrbitPaused(paused) {
 orbitToggle.addEventListener('click', () => {
   setOrbitPaused(!orbitPaused);
 });
+
+if (shaderToggle) {
+  setShaderToggleState(shadingMode);
+  shaderToggle.addEventListener('click', () => {
+    shadingModeIndex = (shadingModeIndex + 1) % SHADING_MODES.length;
+    setShadingMode(SHADING_MODES[shadingModeIndex]);
+  });
+}
 
 function setSidebarEmpty(hintText = 'Pilih komponen ISS untuk lihat detail.') {
   componentHint.innerText = hintText;
@@ -204,6 +409,7 @@ function clearSelection() {
   }
 
   selectedObject = null;
+  selectedCategory = null;
   selectedMaterials = [];
 }
 
@@ -213,6 +419,7 @@ function selectObject(target, category) {
   clearSelection();
 
   selectedObject = target;
+  selectedCategory = category;
   const trackedMaterials = new Set();
 
   target.traverse((node) => {
@@ -233,6 +440,168 @@ function selectObject(target, category) {
 
   updateSidebarForObject(target, category);
   infoPanel.innerText = `${category.label}: ${target.name || target.type}`;
+}
+
+function formatShadingLabel(mode) {
+  if (mode === 'gouraud') return 'Shader: Gouraud';
+  if (mode === 'phong') return 'Shader: Phong';
+  return 'Shader: Default';
+}
+
+function setShaderToggleState(mode) {
+  if (!shaderToggle) return;
+  shaderToggle.innerText = formatShadingLabel(mode);
+  shaderToggle.dataset.mode = mode;
+}
+
+function shouldShadeMaterial(mesh, material) {
+  if (!material) return false;
+  if (mesh.userData && mesh.userData.skipShading) return false;
+  if (material.isMeshBasicMaterial || material.isShaderMaterial || material.isRawShaderMaterial) return false;
+  return true;
+}
+
+function cacheOriginalMaterial(mesh) {
+  if (originalMaterials.has(mesh)) return;
+  originalMaterials.set(mesh, mesh.material || null);
+}
+
+function copyColor(targetColor, sourceColor) {
+  if (!targetColor || !sourceColor) return;
+  targetColor.copy(sourceColor);
+}
+
+function copyMaterialProps(target, source) {
+  if (!source || !target) return;
+
+  copyColor(target.color, source.color);
+  copyColor(target.emissive, source.emissive);
+
+  if (source.emissiveIntensity !== undefined) target.emissiveIntensity = source.emissiveIntensity;
+
+  if (source.map !== undefined) target.map = source.map;
+  if (source.alphaMap !== undefined) target.alphaMap = source.alphaMap;
+  if (source.emissiveMap !== undefined) target.emissiveMap = source.emissiveMap;
+  if (source.normalMap !== undefined) target.normalMap = source.normalMap;
+  if (source.aoMap !== undefined) target.aoMap = source.aoMap;
+  if (source.lightMap !== undefined) target.lightMap = source.lightMap;
+  if (source.displacementMap !== undefined) target.displacementMap = source.displacementMap;
+  if (source.envMap !== undefined) target.envMap = source.envMap;
+
+  if (source.normalScale && target.normalScale) target.normalScale.copy(source.normalScale);
+  if (source.displacementScale !== undefined) target.displacementScale = source.displacementScale;
+  if (source.displacementBias !== undefined) target.displacementBias = source.displacementBias;
+  if (source.aoMapIntensity !== undefined) target.aoMapIntensity = source.aoMapIntensity;
+  if (source.lightMapIntensity !== undefined) target.lightMapIntensity = source.lightMapIntensity;
+  if (source.envMapIntensity !== undefined) target.envMapIntensity = source.envMapIntensity;
+
+  if (source.transparent !== undefined) target.transparent = source.transparent;
+  if (source.opacity !== undefined) target.opacity = source.opacity;
+  if (source.alphaTest !== undefined) target.alphaTest = source.alphaTest;
+  if (source.side !== undefined) target.side = source.side;
+  if (source.blending !== undefined) target.blending = source.blending;
+  if (source.depthWrite !== undefined) target.depthWrite = source.depthWrite;
+  if (source.depthTest !== undefined) target.depthTest = source.depthTest;
+  if (source.polygonOffset !== undefined) target.polygonOffset = source.polygonOffset;
+  if (source.polygonOffsetFactor !== undefined) target.polygonOffsetFactor = source.polygonOffsetFactor;
+  if (source.polygonOffsetUnits !== undefined) target.polygonOffsetUnits = source.polygonOffsetUnits;
+  if (source.vertexColors !== undefined) target.vertexColors = source.vertexColors;
+  if (source.fog !== undefined) target.fog = source.fog;
+  if (source.wireframe !== undefined) target.wireframe = source.wireframe;
+  if (source.flatShading !== undefined) target.flatShading = source.flatShading;
+  if (source.name) target.name = source.name;
+}
+
+function makeGouraudMaterial(source) {
+  if (gouraudMaterialCache.has(source)) return gouraudMaterialCache.get(source);
+
+  const material = new THREE.MeshLambertMaterial();
+  copyMaterialProps(material, source);
+
+  gouraudMaterialCache.set(source, material);
+  return material;
+}
+
+function makePhongMaterial(source) {
+  if (phongMaterialCache.has(source)) return phongMaterialCache.get(source);
+
+  const material = new THREE.MeshPhongMaterial();
+  copyMaterialProps(material, source);
+
+  const roughness = typeof source.roughness === 'number' ? source.roughness : 0.5;
+  material.shininess = Math.max(5, (1 - roughness) * 80);
+
+  const specularIntensity = typeof source.specularIntensity === 'number' ? source.specularIntensity : 0.3;
+  material.specular = new THREE.Color(1, 1, 1).multiplyScalar(Math.min(1, Math.max(0.05, specularIntensity)));
+
+  if (source.specularIntensityMap) {
+    material.specularMap = source.specularIntensityMap;
+  } else if (source.specularMap) {
+    material.specularMap = source.specularMap;
+  }
+
+  phongMaterialCache.set(source, material);
+  return material;
+}
+
+function convertMaterialForMode(mesh, sourceMaterial, mode) {
+  const converter = mode === 'gouraud' ? makeGouraudMaterial : makePhongMaterial;
+
+  if (Array.isArray(sourceMaterial)) {
+    return sourceMaterial.map((material) => (
+      shouldShadeMaterial(mesh, material) ? converter(material) : material
+    ));
+  }
+
+  return shouldShadeMaterial(mesh, sourceMaterial) ? converter(sourceMaterial) : sourceMaterial;
+}
+
+function markMaterialUpdate(material) {
+  if (!material) return;
+
+  if (Array.isArray(material)) {
+    for (const entry of material) {
+      if (entry) entry.needsUpdate = true;
+    }
+    return;
+  }
+
+  material.needsUpdate = true;
+}
+
+function setShadingMode(mode) {
+  if (!SHADING_MODES.includes(mode)) return;
+
+  shadingMode = mode;
+  shadingModeIndex = SHADING_MODES.indexOf(mode);
+  setShaderToggleState(mode);
+
+  const previousSelection = selectedObject;
+  const previousCategory = selectedCategory;
+  if (previousSelection) {
+    clearSelection();
+  }
+
+  scene.traverse((node) => {
+    if (!node.isMesh) return;
+
+    cacheOriginalMaterial(node);
+    const original = originalMaterials.get(node);
+    if (!original) return;
+
+    if (mode === 'default') {
+      node.material = original;
+      markMaterialUpdate(node.material);
+      return;
+    }
+
+    node.material = convertMaterialForMode(node, original, mode);
+    markMaterialUpdate(node.material);
+  });
+
+  if (previousSelection && previousCategory) {
+    selectObject(previousSelection, previousCategory);
+  }
 }
 
 function createFallbackISS() {
@@ -280,6 +649,8 @@ function mountISSModel(modelRoot) {
 
   issOrbit.clear();
   issOrbit.add(iss);
+
+  setShadingMode(shadingMode);
 }
 
 let issFallbackTimer = setTimeout(() => {
@@ -358,6 +729,10 @@ function animate() {
 
   // Rotasi bumi
   earth.rotation.y += 0.001;
+  updateEarthNightLighting();
+
+  sunTimeUniform.value = sunClock.getElapsedTime();
+  sunGroup.rotation.y += 0.0006;
 
   // Orbit ISS
   if (iss && !orbitPaused) {

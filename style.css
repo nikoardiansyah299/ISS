@@ -27,7 +27,8 @@ canvas {
   max-width: 260px;
 }
 
-#orbitToggle {
+#orbitToggle,
+#shaderToggle {
   width: fit-content;
   border: 1px solid rgba(148, 163, 184, 0.45);
   background: rgba(30, 41, 59, 0.9);
@@ -38,7 +39,9 @@ canvas {
   font-weight: 600;
 }
 
-#orbitToggle[aria-pressed="true"] {
+#orbitToggle[aria-pressed="true"],
+#shaderToggle[data-mode="gouraud"],
+#shaderToggle[data-mode="phong"] {
   background: rgba(14, 116, 144, 0.9);
   border-color: rgba(103, 232, 249, 0.6);
 }
