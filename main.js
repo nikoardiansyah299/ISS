@@ -18,6 +18,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 document.body.appendChild(renderer.domElement);
+renderer.domElement.id = 'scene';
 
 // Controls
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -35,6 +36,112 @@ scene.add(ambientLight);
 // Bumi
 const textureLoader = new THREE.TextureLoader();
 const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
+const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+const backgroundPrefKey = 'iss-bg-motion';
+
+function getBackgroundQuality() {
+  const cores = navigator.hardwareConcurrency || 4;
+  const memory = navigator.deviceMemory || 4;
+  const connection = navigator.connection ? navigator.connection.effectiveType : '4g';
+  let quality = 1;
+
+  if (cores <= 4 || memory <= 4) quality *= 0.7;
+  if (typeof connection === 'string' && /2g|3g/.test(connection)) quality *= 0.6;
+
+  return Math.min(1, Math.max(0.35, quality));
+}
+
+function createStarfield(count, radius, spread) {
+  const positions = new Float32Array(count * 3);
+
+  for (let i = 0; i < count; i += 1) {
+    const u = Math.random();
+    const v = Math.random();
+    const theta = 2 * Math.PI * u;
+    const phi = Math.acos(2 * v - 1);
+    const r = radius + Math.random() * spread;
+
+    const sinPhi = Math.sin(phi);
+    const index = i * 3;
+    positions[index] = r * sinPhi * Math.cos(theta);
+    positions[index + 1] = r * Math.cos(phi);
+    positions[index + 2] = r * sinPhi * Math.sin(theta);
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+  const material = new THREE.PointsMaterial({
+    color: 0xffffff,
+    size: 0.4,
+    sizeAttenuation: true,
+    transparent: true,
+    opacity: 0.72,
+    depthWrite: false,
+    depthTest: true,
+    blending: THREE.AdditiveBlending,
+  });
+
+  const points = new THREE.Points(geometry, material);
+  points.frustumCulled = false;
+  return points;
+}
+
+const backgroundQuality = getBackgroundQuality();
+const starfield = createStarfield(Math.round(600 * backgroundQuality), 180, 140);
+starfield.renderOrder = -2;
+scene.add(starfield);
+
+const spaceTexture = textureLoader.load('./image/space.jpg');
+spaceTexture.colorSpace = THREE.SRGBColorSpace;
+spaceTexture.anisotropy = maxAnisotropy;
+
+const skyDome = new THREE.Mesh(
+  new THREE.SphereGeometry(140, 60, 40),
+  new THREE.MeshBasicMaterial({
+    map: spaceTexture,
+    side: THREE.BackSide,
+    depthWrite: false,
+    depthTest: true,
+  })
+);
+skyDome.renderOrder = -3;
+scene.add(skyDome);
+
+function syncBackgroundToCamera() {
+  skyDome.position.copy(camera.position);
+  starfield.position.copy(camera.position);
+}
+
+let backgroundMotionEnabled = !prefersReducedMotion.matches;
+let backgroundMotionUserOverride = false;
+
+try {
+  const savedMotion = localStorage.getItem(backgroundPrefKey);
+  if (savedMotion === 'on' || savedMotion === 'off') {
+    backgroundMotionEnabled = savedMotion === 'on';
+    backgroundMotionUserOverride = true;
+  }
+} catch (error) {
+  backgroundMotionUserOverride = false;
+}
+
+function setBackgroundMotion(enabled, persist = true) {
+  backgroundMotionEnabled = enabled;
+
+  if (backgroundToggle) {
+    backgroundToggle.setAttribute('aria-pressed', String(!enabled));
+    backgroundToggle.textContent = enabled ? 'Gerak Latar: Aktif' : 'Gerak Latar: Diam';
+  }
+
+  if (!persist) return;
+
+  try {
+    localStorage.setItem(backgroundPrefKey, enabled ? 'on' : 'off');
+  } catch (error) {
+    backgroundMotionUserOverride = false;
+  }
+}
 
 function loadEarthTexture(path, colorSpace = THREE.SRGBColorSpace) {
   const texture = textureLoader.load(path);
@@ -242,6 +349,15 @@ if (!shaderToggle && hud) {
   shaderToggle.textContent = 'Shader: Default';
   hud.appendChild(shaderToggle);
 }
+let backgroundToggle = document.getElementById('backgroundToggle');
+if (!backgroundToggle && hud) {
+  backgroundToggle = document.createElement('button');
+  backgroundToggle.id = 'backgroundToggle';
+  backgroundToggle.type = 'button';
+  backgroundToggle.setAttribute('aria-pressed', 'false');
+  backgroundToggle.textContent = 'Gerak Latar: Aktif';
+  hud.appendChild(backgroundToggle);
+}
 const componentHint = document.getElementById('componentHint');
 const componentName = document.getElementById('componentName');
 const componentCategory = document.getElementById('componentCategory');
@@ -309,6 +425,20 @@ if (shaderToggle) {
     setShadingMode(SHADING_MODES[shadingModeIndex]);
   });
 }
+
+setBackgroundMotion(backgroundMotionEnabled);
+
+if (backgroundToggle) {
+  backgroundToggle.addEventListener('click', () => {
+    backgroundMotionUserOverride = true;
+    setBackgroundMotion(!backgroundMotionEnabled);
+  });
+}
+
+prefersReducedMotion.addEventListener('change', (event) => {
+  if (backgroundMotionUserOverride) return;
+  setBackgroundMotion(!event.matches, false);
+});
 
 function setSidebarEmpty(hintText = 'Pilih komponen ISS untuk lihat detail.') {
   componentHint.innerText = hintText;
@@ -734,6 +864,11 @@ function animate() {
   sunTimeUniform.value = sunClock.getElapsedTime();
   sunGroup.rotation.y += 0.0006;
 
+  if (backgroundMotionEnabled) {
+    starfield.rotation.y += 0.00012;
+    skyDome.rotation.y += 0.00002;
+  }
+
   // Orbit ISS
   if (iss && !orbitPaused) {
     angle += 0.002;
@@ -754,6 +889,8 @@ function animate() {
 
   controls.update();
 
+  syncBackgroundToCamera();
+
   renderer.render(scene, camera);
 }
 
@@ -764,4 +901,5 @@ window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 });

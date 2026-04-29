@@ -2,11 +2,14 @@ body {
   margin: 0;
   overflow: hidden;
   font-family: "Segoe UI", Tahoma, sans-serif;
-  background: #0f172a;
+  background: radial-gradient(1200px 800px at 20% 10%, rgba(15, 23, 42, 0.7), rgba(2, 6, 23, 0.96)), #020617;
 }
 
 canvas {
   display: block;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
 }
 
 #hud {
@@ -28,7 +31,8 @@ canvas {
 }
 
 #orbitToggle,
-#shaderToggle {
+#shaderToggle,
+#backgroundToggle {
   width: fit-content;
   border: 1px solid rgba(148, 163, 184, 0.45);
   background: rgba(30, 41, 59, 0.9);
@@ -40,6 +44,7 @@ canvas {
 }
 
 #orbitToggle[aria-pressed="true"],
+#backgroundToggle[aria-pressed="true"],
 #shaderToggle[data-mode="gouraud"],
 #shaderToggle[data-mode="phong"] {
   background: rgba(14, 116, 144, 0.9);
