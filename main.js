@@ -333,7 +333,7 @@ scene.add(issOrbit);
 let iss;
 const loader = new GLTFLoader();
 const dracoLoader = new DRACOLoader();
-dracoLoader.setDecoderPath('./node_modules/three/examples/jsm/libs/draco/');
+dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.160.1/examples/jsm/libs/draco/');
 loader.setDRACOLoader(dracoLoader);
 loader.setMeshoptDecoder(MeshoptDecoder);
 
