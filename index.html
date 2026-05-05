@@ -16,14 +16,34 @@
 <body>
   <div id="hud">
     <div id="infoPanel">Klik modul ISS</div>
-    <button id="orbitToggle" type="button" aria-pressed="false">Pause ISS Orbit</button>
+    <div id="cameraControls">
+      <button id="cameraEarth" type="button" data-mode="earth">🌍 Bumi</button>
+      <button id="cameraISS" type="button" data-mode="iss">🛰️ ISS</button>
+      <button id="cameraSun" type="button" data-mode="sun">☀️ Matahari</button>
+      <button id="cameraFreecam" type="button" data-mode="freecam">🎮 Freecam (WASD)</button>
+    </div>
+    <button id="orbitToggle" type="button" aria-pressed="false">Hentikan ISS Orbit</button>
     <button id="shaderToggle" type="button" data-mode="default">Shader: Default</button>
-    <button id="backgroundToggle" type="button" aria-pressed="false">Gerak Latar: Aktif</button>
+    <button id="backgroundToggle" type="button" aria-pressed="false">Gerakan bintang: Aktif</button>
   </div>
 
   <aside id="sidebar" aria-live="polite">
-    <h2>ISS Component</h2>
-    <p id="componentHint">Pilih komponen ISS untuk lihat detail.</p>
+    <button id="sidebarHandle" aria-label="Toggle sidebar" class="sidebar-handle">☰</button>
+    <h2>ISS & Matahari</h2>
+    <div id="sunControls" class="sidebar-section">
+      <label for="sunScale" class="sidebar-label">
+        Ukuran Matahari
+        <span id="sunScaleValue">1.0x</span>
+      </label>
+      <input id="sunScale" type="range" min="0.2" max="5" step="0.1" value="1">
+      <button id="sunMoveToggle" type="button" aria-pressed="false" class="sidebar-button">
+        Pindah Matahari: Nonaktif
+      </button>
+      <button id="sunResetButton" type="button" class="sidebar-button">
+        Posisi Awal Matahari
+      </button>
+    </div>
+    <p id="componentHint">Pilih komponen ISS atau klik matahari untuk kontrol.</p>
 
     <dl id="componentDetails">
       <div>
@@ -31,20 +51,8 @@
         <dd id="componentName">-</dd>
       </div>
       <div>
-        <dt>Kategori</dt>
-        <dd id="componentCategory">-</dd>
-      </div>
-      <div>
-        <dt>Tipe</dt>
-        <dd id="componentType">-</dd>
-      </div>
-      <div>
         <dt>Hierarchy</dt>
         <dd id="componentPath">-</dd>
-      </div>
-      <div>
-        <dt>Posisi Lokal</dt>
-        <dd id="componentPosition">-</dd>
       </div>
       <div>
         <dt>Keterangan</dt>

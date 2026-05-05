@@ -315,7 +315,28 @@ sunGroup.add(sunCore, sunCorona);
 sunGroup.position.set(12, 6, -10);
 scene.add(sunGroup);
 
-light.position.copy(sunGroup.position);
+const sunHomePosition = sunGroup.position.clone();
+
+function syncSunLight() {
+  light.position.copy(sunGroup.position);
+  if (earth) {
+    light.target.position.copy(earth.position);
+  } else {
+    light.target.position.set(0, 0, 0);
+  }
+  light.target.updateMatrixWorld();
+}
+
+syncSunLight();
+
+function isSunObject(object) {
+  let current = object;
+  while (current) {
+    if (current === sunGroup) return true;
+    current = current.parent;
+  }
+  return false;
+}
 
 const earthLightTarget = new THREE.Vector3();
 const earthLightDirection = new THREE.Vector3();
@@ -360,16 +381,257 @@ if (!backgroundToggle && hud) {
 }
 const componentHint = document.getElementById('componentHint');
 const componentName = document.getElementById('componentName');
-const componentCategory = document.getElementById('componentCategory');
-const componentType = document.getElementById('componentType');
 const componentPath = document.getElementById('componentPath');
-const componentPosition = document.getElementById('componentPosition');
 const componentDescription = document.getElementById('componentDescription');
+const sunScale = document.getElementById('sunScale');
+const sunScaleValue = document.getElementById('sunScaleValue');
+const sunMoveToggle = document.getElementById('sunMoveToggle');
+const sunResetButton = document.getElementById('sunResetButton');
+
+// Sidebar elements and controls (closed by default)
+const sidebar = document.getElementById('sidebar');
+const sidebarHandle = document.getElementById('sidebarHandle');
+
+let sunMoveEnabled = false;
+let sunDragging = false;
+const sunDragPlane = new THREE.Plane();
+const sunDragPoint = new THREE.Vector3();
+const sunDragOffset = new THREE.Vector3();
+const sunDragNormal = new THREE.Vector3();
+
+const sunScaleDefault = 1;
+const sunScaleMin = 0.2;
+const sunScaleMax = 5;
+
+function formatSunScale(value) {
+  return `${value.toFixed(1)}x`;
+}
+
+function setSunScale(value) {
+  const scale = Number(value);
+  if (!Number.isFinite(scale)) return;
+
+  sunGroup.scale.setScalar(scale);
+  if (sunScaleValue) sunScaleValue.textContent = formatSunScale(scale);
+}
+
+function setSunMoveEnabled(enabled) {
+  sunMoveEnabled = enabled;
+
+  if (sunMoveToggle) {
+    sunMoveToggle.setAttribute('aria-pressed', String(enabled));
+    sunMoveToggle.textContent = enabled ? 'Pindah Matahari: Aktif' : 'Pindah Matahari: Nonaktif';
+  }
+
+  if (enabled && currentCameraMode !== 'freecam') {
+    setCameraMode('freecam');
+  }
+
+  if (!enabled) {
+    sunDragging = false;
+    controls.enabled = true;
+  }
+}
+
+function resetSunPosition() {
+  sunGroup.position.copy(sunHomePosition);
+  syncSunLight();
+  updateEarthNightLighting();
+}
+
+if (sunScale) {
+  sunScale.min = String(sunScaleMin);
+  sunScale.max = String(sunScaleMax);
+  sunScale.step = '0.1';
+  sunScale.value = String(sunScaleDefault);
+  sunScale.addEventListener('input', (event) => {
+    setSunScale(event.target.value);
+  });
+}
+
+if (sunMoveToggle) {
+  sunMoveToggle.addEventListener('click', () => {
+    setSunMoveEnabled(!sunMoveEnabled);
+    if (infoPanel) {
+      infoPanel.innerText = sunMoveEnabled
+        ? 'Pindah matahari aktif. Seret matahari untuk pindah.'
+        : 'Pindah matahari nonaktif.';
+    }
+  });
+}
+
+if (sunResetButton) {
+  sunResetButton.addEventListener('click', () => {
+    resetSunPosition();
+    if (infoPanel) infoPanel.innerText = 'Posisi matahari dikembalikan.';
+  });
+}
+
+setSunScale(sunScaleDefault);
+
+function openSidebar() {
+  if (!sidebar) return;
+  sidebar.classList.add('open');
+  sidebar.setAttribute('aria-hidden', 'false');
+}
+
+function closeSidebar() {
+  if (!sidebar) return;
+  sidebar.classList.remove('open');
+  sidebar.setAttribute('aria-hidden', 'true');
+}
+
+function toggleSidebar() {
+  if (!sidebar) return;
+  sidebar.classList.toggle('open');
+  sidebar.setAttribute('aria-hidden', sidebar.classList.contains('open') ? 'false' : 'true');
+}
+
+if (sidebar) closeSidebar();
+if (sidebarHandle) sidebarHandle.addEventListener('click', toggleSidebar);
+
+// Camera mode controls
+const cameraEarthBtn = document.getElementById('cameraEarth');
+const cameraISSBtn = document.getElementById('cameraISS');
+const cameraSunBtn = document.getElementById('cameraSun');
+const cameraFreecamBtn = document.getElementById('cameraFreecam');
+
+let currentCameraMode = 'freecam';
+let issFollowEnabled = false;
+const issFollowPrev = new THREE.Vector3();
+const issFollowDelta = new THREE.Vector3();
+const freecamLookDir = new THREE.Vector3();
+const cameraKeys = { w: false, a: false, s: false, d: false };
+const cameraSpeed = 0.15;
+
+function updateCameraModeButton(mode) {
+  [cameraEarthBtn, cameraISSBtn, cameraSunBtn, cameraFreecamBtn].forEach((btn) => {
+    if (!btn) return;
+    btn.setAttribute('data-active', btn.dataset.mode === mode ? 'true' : 'false');
+  });
+}
+
+function focusCameraOn(targetPos, targetDistance = 8, duration = 800, mode = 'focused', onComplete = null) {
+  currentCameraMode = mode;
+  updateCameraModeButton(mode);
+  controls.enableRotate = false;
+
+  const startPos = camera.position.clone();
+  const direction = targetPos.clone().sub(startPos).normalize();
+  const endPos = targetPos.clone().add(direction.multiplyScalar(-targetDistance));
+
+  const startTime = performance.now();
+
+  function animateCamera(now) {
+    const elapsed = now - startTime;
+    const progress = Math.min(elapsed / duration, 1);
+    
+    // easeInOutCubic
+    const t = progress < 0.5
+      ? 4 * progress * progress * progress
+      : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+    camera.position.lerpVectors(startPos, endPos, t);
+    camera.lookAt(targetPos);
+
+    if (progress < 1) {
+      requestAnimationFrame(animateCamera);
+    } else {
+      controls.target.copy(targetPos);
+      controls.enableRotate = true;
+      currentCameraMode = mode;
+      updateCameraModeButton(mode);
+      if (typeof onComplete === 'function') onComplete();
+    }
+  }
+
+  requestAnimationFrame(animateCamera);
+}
+
+function enableISSFollow() {
+  if (!iss) return;
+  issFollowEnabled = true;
+  issFollowPrev.copy(issOrbit.position);
+  controls.target.copy(issOrbit.position);
+  currentCameraMode = 'iss';
+  updateCameraModeButton('iss');
+}
+
+function setCameraMode(mode) {
+  issFollowEnabled = false;
+
+  if (mode === 'earth' && earth) {
+    focusCameraOn(earth.position, 6, 800, 'earth');
+  } else if (mode === 'iss' && iss) {
+    focusCameraOn(issOrbit.position, 5, 800, 'iss', enableISSFollow);
+  } else if (mode === 'sun') {
+    focusCameraOn(sunGroup.position, 5, 800, 'sun');
+  } else if (mode === 'freecam') {
+    currentCameraMode = 'freecam';
+    updateCameraModeButton('freecam');
+    controls.enableRotate = true;
+    controls.enablePan = false;
+    controls.enableZoom = true;
+    camera.getWorldDirection(freecamLookDir);
+    controls.target.copy(camera.position).add(freecamLookDir.multiplyScalar(1.2));
+  }
+}
+
+if (cameraEarthBtn) cameraEarthBtn.addEventListener('click', () => setCameraMode('earth'));
+if (cameraISSBtn) cameraISSBtn.addEventListener('click', () => setCameraMode('iss'));
+if (cameraSunBtn) cameraSunBtn.addEventListener('click', () => setCameraMode('sun'));
+if (cameraFreecamBtn) cameraFreecamBtn.addEventListener('click', () => setCameraMode('freecam'));
+
+// WASD movement for freecam
+window.addEventListener('keydown', (event) => {
+  const key = event.key.toLowerCase();
+  if (key === 'w') cameraKeys.w = true;
+  if (key === 'a') cameraKeys.a = true;
+  if (key === 's') cameraKeys.s = true;
+  if (key === 'd') cameraKeys.d = true;
+});
+
+window.addEventListener('keyup', (event) => {
+  const key = event.key.toLowerCase();
+  if (key === 'w') cameraKeys.w = false;
+  if (key === 'a') cameraKeys.a = false;
+  if (key === 's') cameraKeys.s = false;
+  if (key === 'd') cameraKeys.d = false;
+});
+
+function updateFreecamMovement() {
+  if (currentCameraMode !== 'freecam') return;
+
+  const forward = new THREE.Vector3();
+  const right = new THREE.Vector3();
+  
+  camera.getWorldDirection(forward);
+  forward.y = 0;
+  forward.normalize();
+  right.crossVectors(forward, camera.up);
+  right.y = 0;
+  right.normalize();
+
+  let moveDir = new THREE.Vector3();
+  if (cameraKeys.w) moveDir.add(forward);
+  if (cameraKeys.s) moveDir.sub(forward);
+  if (cameraKeys.d) moveDir.add(right);
+  if (cameraKeys.a) moveDir.sub(right);
+
+  if (moveDir.length() > 0) {
+    moveDir.normalize().multiplyScalar(cameraSpeed);
+    camera.position.add(moveDir);
+    controls.target.add(moveDir);
+  }
+}
+
+updateCameraModeButton('freecam');
 
 let orbitPaused = false;
 let selectedObject = null;
-let selectedCategory = null;
+let selectedPart = null;
 let selectedMaterials = [];
+let selectedMaterialSwaps = [];
 const glowColor = new THREE.Color(0x64ffb0);
 const glowClock = new THREE.Clock();
 const sunClock = new THREE.Clock();
@@ -380,31 +642,120 @@ const originalMaterials = new Map();
 const gouraudMaterialCache = new Map();
 const phongMaterialCache = new Map();
 
-const CLICKABLE_CATEGORIES = [
+const ISS_PARTS = [
   {
-    id: 'core-modules',
-    label: 'Modul Inti',
-    keywords: [
-      'module', 'modul', 'node', 'zarya', 'zvezda', 'unity', 'harmony',
-      'tranquility', 'destiny', 'columbus', 'kibo', 'cupola', 'nauka',
-      'poisk', 'pirs', 'rasvet', 'prichal', 'leonardo', 'lab',
-    ],
+    id: 'panel-surya',
+    category: 'Panel Surya',
+    names: ['panel surya'],
+    description: 'Panel surya ISS adalah sumber listrik utama yang mengubah cahaya matahari menjadi energi listrik. Energi ini disalurkan ke baterai dan sistem utama seperti kendali termal, komputer, komunikasi, dan eksperimen. Orientasi panel terus diatur agar daya tetap stabil di berbagai kondisi orbit.\n\nSejak awal pembangunan ISS, panel surya dipasang bertahap bersama segmen truss untuk menambah kapasitas daya. Konfigurasi panel berkembang selama era Space Shuttle untuk meningkatkan keluaran listrik dan umur operasi. Panel-panel ini menjadi ciri visual paling khas dari ISS.',
   },
   {
-    id: 'solar-arrays',
-    label: 'Panel Surya',
-    keywords: ['solar', 'array', 'panel', 'sarj', 'bga'],
+    id: 'p4-truss',
+    category: 'Struktur Truss',
+    names: ['20 P4 Truss_01', '20 P4 Truss_02'],
+    description: 'Segmen P4 adalah bagian truss di sisi port yang membawa jalur distribusi daya, struktur penyangga panel, dan titik sambung peralatan eksternal. Ia menjadi penghubung penting antara rangka utama dan perangkat tenaga di sisi kiri ISS.\n\nP4 dipasang pada 2000 dalam rangkaian misi pembangunan awal ISS. Kehadirannya memperpanjang tulang punggung struktural stasiun dan menyiapkan jalur untuk panel surya besar di sisi port.',
   },
   {
-    id: 'truss',
-    label: 'Struktur Truss',
-    keywords: ['truss', 'its', 's0', 's1', 's3', 's4', 's5', 's6', 'p1', 'p3', 'p4', 'p5', 'p6'],
+    id: 'p6-truss',
+    category: 'Struktur Truss',
+    names: ['08 P6 Truss_01', '08 P6 Truss_02'],
+    description: 'Segmen P6 berada di ujung sisi port dan menampung panel surya besar serta sistem listrik terkait. Segmen ini juga membawa struktur pendukung yang menjaga panel tetap stabil saat ISS bermanuver.\n\nP6 merupakan salah satu segmen awal yang membawa panel surya besar untuk tahap awal operasi ISS. Segmen ini pernah diposisikan sementara di atas struktur tengah sebelum dipindahkan ke lokasi permanen saat truss lengkap.',
   },
   {
-    id: 'docking-airlock',
-    label: 'Docking/Airlock',
-    keywords: ['dock', 'docking', 'port', 'hatch', 'airlock', 'ida', 'pma', 'cbm', 'berthing'],
+    id: 's4-truss',
+    category: 'Struktur Truss',
+    names: ['23 S4 Truss_01', '23 S4 Truss_02'],
+    description: 'Segmen S4 adalah bagian truss di sisi starboard yang membawa panel surya dan jalur distribusi daya ke sisi kanan stasiun. Struktur ini menjaga keseimbangan daya antara kedua sisi ISS.\n\nS4 dipasang pada 2002 ketika ISS berkembang menjadi kompleks yang lebih besar. Kehadirannya menambah kapasitas listrik dan memperpanjang kemampuan operasi stasiun.',
   },
+  {
+    id: 's6-truss',
+    category: 'Struktur Truss',
+    names: ['32 S6 Truss_01', '32 S6 Truss_02'],
+    description: 'Segmen S6 berada di ujung sisi starboard dan menampung panel surya tambahan serta struktur pendukungnya. Segmen ini melengkapi distribusi daya pada sisi kanan ISS.\n\nS6 dipasang pada 2009 sebagai salah satu segmen terakhir dari rangkaian truss utama. Dengan pemasangan ini, kapasitas daya ISS mencapai konfigurasi puncaknya.',
+  },
+  {
+    id: 'zarya',
+    category: 'Modul Inti',
+    names: ['zarya', '01 Zarya - (FGB) Funtional Cargo Block'],
+    description: 'Zarya (FGB) adalah modul pertama ISS yang menyediakan daya awal, kontrol orientasi sementara, serta ruang penyimpanan. Modul ini juga menjadi titik docking awal untuk rangkaian perakitan stasiun.\n\nDiluncurkan pada 1998 sebagai kerja sama Amerika Serikat dan Rusia, Zarya menjadi fondasi awal perakitan ISS. Keberadaannya memungkinkan modul berikutnya berlabuh dan memulai operasi awal stasiun.',
+  },
+  {
+    id: 'zvezda',
+    category: 'Modul Inti',
+    names: ['zvezda', '05 Zvezda (SM) Service Module'],
+    description: 'Zvezda adalah Service Module yang menyediakan sistem pendukung kehidupan, ruang tinggal, dan kemampuan propulsi utama. Modul ini menjadi pusat operasi harian kru untuk jangka panjang.\n\nDiluncurkan pada 2000, Zvezda menandai transisi ISS menjadi stasiun yang dapat dihuni terus-menerus. Modul ini menjadi tulang punggung segmen Rusia dan memperkuat kemampuan bertahan di orbit.',
+  },
+  {
+    id: 'destiny',
+    category: 'Modul Inti',
+    names: ['destiny', '09 Destiny Space Laboratory'],
+    description: 'Destiny adalah laboratorium utama Amerika Serikat untuk riset mikrogravitasi. Di dalamnya, kru melakukan eksperimen biologi, fisika, dan pengembangan teknologi ruang angkasa.\n\nDiluncurkan pada 2001, Destiny menjadi pusat penelitian jangka panjang dan salah satu pilar ilmiah ISS. Modul ini memperluas kapasitas eksperimen internasional di orbit.',
+  },
+  {
+    id: 'harmony',
+    category: 'Modul Inti',
+    names: ['harmony', '26 Harmony Node 2'],
+    description: 'Harmony adalah node penghubung yang menyatukan beberapa modul besar dan menyediakan jalur utilitas di antaranya. Modul ini memastikan aliran daya, data, dan udara tetap konsisten di antara segmen ISS.\n\nDiluncurkan pada 2007, Harmony membuka ruang untuk pemasangan Columbus dan Kibo. Node ini memperluas area riset internasional dan memperkuat struktur internal stasiun.',
+  },
+  {
+    id: 'columbus',
+    category: 'Modul Inti',
+    names: ['colombus', '27 Columbus Space Laboratory'],
+    description: 'Columbus adalah laboratorium milik ESA yang fokus pada eksperimen sains dan teknologi di mikrogravitasi. Modul ini menyediakan rak eksperimen dan fasilitas pemantauan modern.\n\nDiluncurkan pada 2008, Columbus memperkuat kontribusi Eropa dan menambah kapasitas riset ISS. Kehadirannya menandai babak baru kolaborasi ilmiah lintas negara.',
+  },
+  {
+    id: 'kibo-pressurized-module',
+    category: 'Modul Inti',
+    names: ['30 Kibo Space Laboratory (PSM) Pressurized Module'],
+    description: 'Modul Pressurized Kibo adalah laboratorium utama Jepang dengan fasilitas eksperimen di lingkungan bertekanan. Di sini kru menjalankan penelitian biologi dan teknologi yang membutuhkan ruang tertutup stabil.\n\nDiluncurkan pada 2008, modul ini memperluas kemampuan penelitian JAXA dan memperkuat kerja sama internasional. Kibo menjadi salah satu laboratorium terbesar di ISS.',
+  },
+  {
+    id: 'kibo-stowage',
+    category: 'Modul Inti',
+    names: ['28 Kibo Space Laboratory (PSM) Pressurized Stowage Module'],
+    description: 'Pressurized Stowage Module Kibo menyediakan ruang penyimpanan bertekanan untuk peralatan, sampel, dan logistik eksperimen. Modul ini membantu menjaga alur kerja laboratorium tetap rapi dan efisien.\n\nDiluncurkan pada 2008, modul ini mendukung operasi Kibo dengan kapasitas penyimpanan yang lebih terorganisir. Ini memperpanjang durasi eksperimen tanpa sering menambah kargo baru.',
+  },
+  {
+    id: 'kibo-exposed-platform',
+    category: 'Modul Inti',
+    names: ['33 Kibo Space Laboratory Exposed Platform'],
+    description: 'Exposed Platform Kibo adalah area eksperimen eksternal untuk pengujian material dan instrumen yang terpapar langsung ke ruang angkasa. Platform ini memungkinkan penelitian yang tidak bisa dilakukan di dalam modul bertekanan.\n\nDiposisikan pada 2009, platform ini memungkinkan eksperimen jangka panjang di lingkungan luar ISS. Fasilitas ini menjadi salah satu kontribusi unik Jepang pada ISS.',
+  },
+  {
+    id: 'kibo',
+    category: 'Modul Inti',
+    names: ['kibo'],
+    description: 'Kibo adalah kompleks laboratorium Jepang di ISS yang terdiri dari modul bertekanan, modul penyimpanan, dan platform eksperimen luar. Fasilitas ini memungkinkan penelitian sains dan teknologi yang membutuhkan ruang kerja stabil sekaligus akses ke lingkungan luar ruang angkasa.\n\nKibo dirakit dan dioperasikan bertahap pada 2008-2009 sebagai kontribusi utama JAXA. Sejak itu, Kibo menjadi salah satu pusat penelitian paling aktif di ISS dan memperluas kolaborasi ilmiah internasional.',
+  },
+  {
+    id: 'unity',
+    category: 'Modul Inti',
+    names: ['unity', '02 Unity Node 1'],
+    description: 'Unity adalah node penghubung pertama milik Amerika Serikat yang menyatukan modul-modul awal ISS. Modul ini menjaga aliran daya, data, dan udara antarsegmen.\n\nDiluncurkan pada 1998, Unity menjadi titik pertemuan awal antara segmen Amerika dan Rusia. Perannya krusial dalam tahap perakitan awal ISS.',
+  },
+  {
+    id: 'quest-airlock',
+    category: 'Docking/Airlock',
+    names: ['airlock', '12 Quest Airlock'],
+    description: 'Quest Airlock adalah pintu utama untuk aktivitas EVA, tempat astronaut menyiapkan diri keluar masuk stasiun. Sistem airlock mengatur tekanan agar transisi ke vakum berlangsung aman.\n\nDiluncurkan pada 2001, Quest menjadi airlock khusus Amerika Serikat. Modul ini mempercepat operasi pemeliharaan eksternal dan mendukung banyak misi perbaikan.',
+  },
+  {
+    id: 'tranquility',
+    category: 'Modul Inti',
+    names: ['traunquility', '37 Tranquility Node 3'],
+    description: 'Tranquility menampung sistem penunjang kehidupan, kontrol lingkungan, dan koneksi ke Cupola. Modul ini membantu menjaga kualitas udara, air, dan kenyamanan kru.\n\nDiluncurkan pada 2010, Tranquility meningkatkan kemampuan hidup jangka panjang di ISS. Modul ini juga memperkuat area observasi dan pengawasan Bumi.',
+  },
+];
+
+const PART_LOOKUP = new Map();
+const PART_NAME_LIST = [];
+const BOUNDARY_LOOKUP = new Set();
+const BOUNDARY_PART = { id: 'boundary' };
+const BOUNDARY_NAMES = [
+  '16 S1 Truss',
+  '14 S0 Truss',
+  '17 P1 Truss',
+  '16 S1 Truss_02',
 ];
 
 function setOrbitPaused(paused) {
@@ -440,46 +791,73 @@ prefersReducedMotion.addEventListener('change', (event) => {
   setBackgroundMotion(!event.matches, false);
 });
 
-function setSidebarEmpty(hintText = 'Pilih komponen ISS untuk lihat detail.') {
-  componentHint.innerText = hintText;
-  componentName.innerText = '-';
-  componentCategory.innerText = '-';
-  componentType.innerText = '-';
-  componentPath.innerText = '-';
-  componentPosition.innerText = '-';
-  componentDescription.innerText = '-';
+function setSidebarEmpty(hintText = 'Pilih komponen ISS atau klik matahari untuk kontrol.') {
+  if (componentHint) componentHint.innerText = hintText;
+  if (componentName) componentName.innerText = '-';
+  if (componentPath) componentPath.innerText = '-';
+  if (componentDescription) componentDescription.innerText = '-';
 }
 
-function describeComponent(categoryId) {
-  if (categoryId === 'solar-arrays') {
-    return 'Bagian ini termasuk panel surya ISS yang menangkap energi matahari untuk menjadi listrik utama stasiun. Daya ini dipakai untuk sistem pendukung kehidupan, komputer penerbangan, komunikasi, dan eksperimen ilmiah. Saat orientasi panel disesuaikan, efisiensi suplai daya bisa ditingkatkan sesuai posisi ISS terhadap Matahari. Tanpa panel surya, operasi harian stasiun akan sangat terbatas.';
+function cloneMaterialIfPossible(material) {
+  if (!material || typeof material.clone !== 'function') {
+    return { material, cloned: false };
   }
 
-  if (categoryId === 'truss') {
-    return 'Bagian ini termasuk struktur truss, yaitu rangka panjang yang menjadi tulang punggung eksternal ISS. Truss menahan beban penting seperti panel surya, radiator, kabel daya, serta jalur distribusi data dan termal. Stabilitas truss sangat menentukan keseimbangan struktur saat stasiun bermanuver di orbit. Karena itu, truss berperan besar dalam menjaga integritas mekanik seluruh stasiun.';
-  }
-
-  if (categoryId === 'docking-airlock') {
-    return 'Bagian ini termasuk area docking atau airlock untuk pertemuan wahana, transfer kru, dan aktivitas keluar-masuk bertekanan. Docking port menjadi titik sambung aman untuk kapsul logistik maupun kendaraan berawak. Airlock memungkinkan astronaut melakukan EVA dengan prosedur tekanan yang terkontrol. Komponen ini penting untuk rotasi kru, suplai misi, dan pemeliharaan eksternal.';
-  }
-
-  return 'Bagian ini termasuk modul inti ISS yang menjadi ruang bertekanan tempat kru tinggal, bekerja, dan melakukan riset. Di dalam modul terdapat sistem penting seperti kontrol lingkungan, komputer penerbangan, dan antarmuka utilitas antarmodul. Modul inti juga menghubungkan banyak jalur internal sehingga mobilitas kru tetap efisien. Secara operasional, area ini adalah pusat aktivitas harian stasiun.';
+  return { material: material.clone(), cloned: true };
 }
 
-function normalizeText(text) {
-  return String(text || '').toLowerCase();
+function trackHighlightMaterial(material) {
+  if (!material || !material.emissive) return;
+
+  selectedMaterials.push({
+    material,
+    emissive: material.emissive.clone(),
+    emissiveIntensity: material.emissiveIntensity ?? 1,
+  });
 }
 
-function resolveCategoryFromLabel(text) {
-  const value = normalizeText(text);
-  if (!value) return null;
+function normalizePartName(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/_/g, ' ')
+    .replace(/\s*\.\d+$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
-  for (const category of CLICKABLE_CATEGORIES) {
-    for (const keyword of category.keywords) {
-      if (value.includes(keyword)) {
-        return category;
-      }
+for (const part of ISS_PARTS) {
+  for (const name of part.names) {
+    const normalized = normalizePartName(name);
+    PART_LOOKUP.set(normalized, part);
+    PART_NAME_LIST.push({ name: normalized, part });
+  }
+}
+
+for (const name of BOUNDARY_NAMES) {
+  BOUNDARY_LOOKUP.add(normalizePartName(name));
+}
+
+function resolvePartFromLabel(text) {
+  const normalized = normalizePartName(text);
+  if (!normalized) return null;
+  return PART_LOOKUP.get(normalized) || null;
+}
+
+function resolvePartFromLabelLoose(text) {
+  const normalized = normalizePartName(text);
+  if (!normalized) return null;
+
+  const exact = PART_LOOKUP.get(normalized);
+  if (exact) return exact;
+
+  for (const entry of PART_NAME_LIST) {
+    if (normalized.includes(entry.name) || entry.name.includes(normalized)) {
+      return entry.part;
     }
+  }
+
+  if (BOUNDARY_LOOKUP.has(normalized)) {
+    return BOUNDARY_PART;
   }
 
   return null;
@@ -489,9 +867,9 @@ function resolveSelectableTarget(meshObject) {
   let current = meshObject;
 
   while (current) {
-    const category = resolveCategoryFromLabel(current.name || current.type);
-    if (category) {
-      return { target: current, category };
+    const part = resolvePartFromLabel(current.name);
+    if (part) {
+      return { target: current, part };
     }
 
     if (current === iss) break;
@@ -501,8 +879,29 @@ function resolveSelectableTarget(meshObject) {
   return null;
 }
 
-function formatVector(vec) {
-  return `${vec.x.toFixed(2)}, ${vec.y.toFixed(2)}, ${vec.z.toFixed(2)}`;
+function traverseSelectionRoot(root, selectedPart, onMesh) {
+  const stack = [root];
+
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node) continue;
+
+    const nodePart = resolvePartFromLabelLoose(node.name);
+    if (nodePart && nodePart.id !== selectedPart.id && node !== root) {
+      continue;
+    }
+
+    if (node.isMesh) {
+      onMesh(node);
+    }
+
+    const children = node.children;
+    if (!children || !children.length) continue;
+
+    for (let i = children.length - 1; i >= 0; i -= 1) {
+      stack.push(children[i]);
+    }
+  }
 }
 
 function getObjectPath(target, root) {
@@ -518,14 +917,20 @@ function getObjectPath(target, root) {
   return nodes.reverse().join(' > ');
 }
 
-function updateSidebarForObject(target, category) {
-  componentHint.innerText = 'Komponen terpilih';
-  componentName.innerText = target.name || 'Tanpa nama';
-  componentCategory.innerText = category.label;
-  componentType.innerText = target.type;
-  componentPath.innerText = getObjectPath(target, iss);
-  componentPosition.innerText = formatVector(target.position);
-  componentDescription.innerText = describeComponent(category.id);
+function updateSidebarForObject(target, part) {
+  if (componentHint) componentHint.innerText = 'Komponen terpilih';
+  if (componentName) componentName.innerText = target.name || 'Tanpa nama';
+  if (componentPath) componentPath.innerText = getObjectPath(target, iss);
+  if (componentDescription) componentDescription.innerText = part.description;
+}
+
+function setSidebarForSun() {
+  if (componentHint) componentHint.innerText = 'Matahari terpilih';
+  if (componentName) componentName.innerText = 'Matahari';
+  if (componentPath) componentPath.innerText = 'Matahari';
+  if (componentDescription) {
+    componentDescription.innerText = 'Gunakan slider Matahari di atas untuk ubah ukuran (0.2x-5.0x) atau aktifkan Pindah Matahari untuk memindahkan posisi.';
+  }
 }
 
 function clearSelection() {
@@ -538,38 +943,58 @@ function clearSelection() {
     entry.material.emissiveIntensity = entry.emissiveIntensity;
   }
 
+  for (const swap of selectedMaterialSwaps) {
+    swap.mesh.material = swap.originalMaterial;
+  }
+
   selectedObject = null;
-  selectedCategory = null;
+  selectedPart = null;
   selectedMaterials = [];
+  selectedMaterialSwaps = [];
 }
 
-function selectObject(target, category) {
+function selectObject(target, part) {
   if (selectedObject === target) return;
 
   clearSelection();
 
   selectedObject = target;
-  selectedCategory = category;
-  const trackedMaterials = new Set();
+  selectedPart = part;
+  traverseSelectionRoot(target, selectedPart, (node) => {
+    const originalMaterial = node.material;
 
-  target.traverse((node) => {
-    if (!node.isMesh) return;
+    if (Array.isArray(originalMaterial)) {
+      const swappedMaterials = [];
+      let didSwap = false;
 
-    const materialList = Array.isArray(node.material) ? node.material : [node.material];
-    for (const material of materialList) {
-      if (!material || !material.emissive || trackedMaterials.has(material)) continue;
+      for (const material of originalMaterial) {
+        const { material: clonedMaterial, cloned } = cloneMaterialIfPossible(material);
+        swappedMaterials.push(clonedMaterial);
+        if (cloned) {
+          didSwap = true;
+          trackHighlightMaterial(clonedMaterial);
+        }
+      }
 
-      trackedMaterials.add(material);
-      selectedMaterials.push({
-        material,
-        emissive: material.emissive.clone(),
-        emissiveIntensity: material.emissiveIntensity ?? 1,
-      });
+      if (!didSwap) return;
+
+      node.material = swappedMaterials;
+      selectedMaterialSwaps.push({ mesh: node, originalMaterial });
+      return;
     }
+
+    const { material: clonedMaterial, cloned } = cloneMaterialIfPossible(originalMaterial);
+    if (!cloned) return;
+
+    node.material = clonedMaterial;
+    selectedMaterialSwaps.push({ mesh: node, originalMaterial });
+    trackHighlightMaterial(clonedMaterial);
   });
 
-  updateSidebarForObject(target, category);
-  infoPanel.innerText = `${category.label}: ${target.name || target.type}`;
+  updateSidebarForObject(target, part);
+  infoPanel.innerText = `${part.category}: ${target.name || target.type}`;
+  // open sidebar when user selects a component
+  openSidebar();
 }
 
 function formatShadingLabel(mode) {
@@ -600,45 +1025,34 @@ function copyColor(targetColor, sourceColor) {
   if (!targetColor || !sourceColor) return;
   targetColor.copy(sourceColor);
 }
-
 function copyMaterialProps(target, source) {
   if (!source || !target) return;
 
+  // colors
   copyColor(target.color, source.color);
   copyColor(target.emissive, source.emissive);
-
   if (source.emissiveIntensity !== undefined) target.emissiveIntensity = source.emissiveIntensity;
 
-  if (source.map !== undefined) target.map = source.map;
-  if (source.alphaMap !== undefined) target.alphaMap = source.alphaMap;
-  if (source.emissiveMap !== undefined) target.emissiveMap = source.emissiveMap;
-  if (source.normalMap !== undefined) target.normalMap = source.normalMap;
-  if (source.aoMap !== undefined) target.aoMap = source.aoMap;
-  if (source.lightMap !== undefined) target.lightMap = source.lightMap;
-  if (source.displacementMap !== undefined) target.displacementMap = source.displacementMap;
-  if (source.envMap !== undefined) target.envMap = source.envMap;
+  // texture maps
+  const mapProps = ['map', 'alphaMap', 'emissiveMap', 'normalMap', 'aoMap', 'lightMap', 'displacementMap', 'envMap'];
+  for (const p of mapProps) {
+    if (source[p] !== undefined) target[p] = source[p];
+  }
 
   if (source.normalScale && target.normalScale) target.normalScale.copy(source.normalScale);
-  if (source.displacementScale !== undefined) target.displacementScale = source.displacementScale;
-  if (source.displacementBias !== undefined) target.displacementBias = source.displacementBias;
-  if (source.aoMapIntensity !== undefined) target.aoMapIntensity = source.aoMapIntensity;
-  if (source.lightMapIntensity !== undefined) target.lightMapIntensity = source.lightMapIntensity;
-  if (source.envMapIntensity !== undefined) target.envMapIntensity = source.envMapIntensity;
 
-  if (source.transparent !== undefined) target.transparent = source.transparent;
-  if (source.opacity !== undefined) target.opacity = source.opacity;
-  if (source.alphaTest !== undefined) target.alphaTest = source.alphaTest;
-  if (source.side !== undefined) target.side = source.side;
-  if (source.blending !== undefined) target.blending = source.blending;
-  if (source.depthWrite !== undefined) target.depthWrite = source.depthWrite;
-  if (source.depthTest !== undefined) target.depthTest = source.depthTest;
-  if (source.polygonOffset !== undefined) target.polygonOffset = source.polygonOffset;
-  if (source.polygonOffsetFactor !== undefined) target.polygonOffsetFactor = source.polygonOffsetFactor;
-  if (source.polygonOffsetUnits !== undefined) target.polygonOffsetUnits = source.polygonOffsetUnits;
-  if (source.vertexColors !== undefined) target.vertexColors = source.vertexColors;
-  if (source.fog !== undefined) target.fog = source.fog;
-  if (source.wireframe !== undefined) target.wireframe = source.wireframe;
-  if (source.flatShading !== undefined) target.flatShading = source.flatShading;
+  // numeric intensities / scales
+  const numProps = ['displacementScale', 'displacementBias', 'aoMapIntensity', 'lightMapIntensity', 'envMapIntensity'];
+  for (const p of numProps) {
+    if (source[p] !== undefined) target[p] = source[p];
+  }
+
+  // boolean/enum/depth/polygon/etc
+  const miscProps = ['transparent', 'opacity', 'alphaTest', 'side', 'blending', 'depthWrite', 'depthTest', 'polygonOffset', 'polygonOffsetFactor', 'polygonOffsetUnits', 'vertexColors', 'fog', 'wireframe', 'flatShading'];
+  for (const p of miscProps) {
+    if (source[p] !== undefined) target[p] = source[p];
+  }
+
   if (source.name) target.name = source.name;
 }
 
@@ -707,7 +1121,7 @@ function setShadingMode(mode) {
   setShaderToggleState(mode);
 
   const previousSelection = selectedObject;
-  const previousCategory = selectedCategory;
+  const previousPart = selectedPart;
   if (previousSelection) {
     clearSelection();
   }
@@ -729,8 +1143,8 @@ function setShadingMode(mode) {
     markMaterialUpdate(node.material);
   });
 
-  if (previousSelection && previousCategory) {
-    selectObject(previousSelection, previousCategory);
+  if (previousSelection && previousPart) {
+    selectObject(previousSelection, previousPart);
   }
 }
 
@@ -820,35 +1234,88 @@ loader.load(
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 
-renderer.domElement.addEventListener('pointerdown', (event) => {
-  if (!iss) return;
-
+function updateRayFromEvent(event) {
   const bounds = renderer.domElement.getBoundingClientRect();
   mouse.x = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
   mouse.y = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
-
   raycaster.setFromCamera(mouse, camera);
+}
 
-  const intersects = raycaster.intersectObjects(iss.children, true);
+function beginSunDrag() {
+  if (!sunMoveEnabled || !sunGroup) return false;
+
+  camera.getWorldDirection(sunDragNormal);
+  sunDragPlane.setFromNormalAndCoplanarPoint(sunDragNormal, sunGroup.position);
+  const hit = raycaster.ray.intersectPlane(sunDragPlane, sunDragPoint);
+  if (!hit) return false;
+
+  sunDragOffset.copy(sunGroup.position).sub(sunDragPoint);
+  sunDragging = true;
+  controls.enabled = false;
+  return true;
+}
+
+function updateSunDrag(event) {
+  if (!sunDragging) return;
+  updateRayFromEvent(event);
+  const hit = raycaster.ray.intersectPlane(sunDragPlane, sunDragPoint);
+  if (!hit) return;
+
+  sunGroup.position.copy(sunDragPoint).add(sunDragOffset);
+  syncSunLight();
+}
+
+function endSunDrag() {
+  if (!sunDragging) return;
+  sunDragging = false;
+  controls.enabled = true;
+}
+
+renderer.domElement.addEventListener('pointerdown', (event) => {
+  updateRayFromEvent(event);
+
+  const targets = [];
+  if (iss) targets.push(iss);
+  if (sunGroup) targets.push(sunGroup);
+  if (!targets.length) return;
+
+  const intersects = raycaster.intersectObjects(targets, true);
 
   if (!intersects.length) {
     clearSelection();
     setSidebarEmpty('Tidak ada komponen dipilih.');
     infoPanel.innerText = 'Seleksi dilepas. Klik komponen ISS lain.';
+    // close sidebar when clicking empty space
+    closeSidebar();
     return;
   }
 
   const hit = intersects.find((item) => item.object && item.object.isMesh);
   if (!hit) return;
 
-  const resolved = resolveSelectableTarget(hit.object);
-  if (!resolved) {
-    infoPanel.innerText = 'Bagian ini tidak interaktif. Klik modul inti, panel surya, truss, atau docking/airlock.';
+  if (isSunObject(hit.object)) {
+    clearSelection();
+    setSidebarForSun();
+    infoPanel.innerText = sunMoveEnabled
+      ? 'Pindah matahari aktif. Seret matahari untuk pindah.'
+      : 'Matahari dipilih. Atur ukuran di sidebar.';
+    openSidebar();
+    if (sunMoveEnabled) beginSunDrag();
     return;
   }
 
-  selectObject(resolved.target, resolved.category);
+  const resolved = resolveSelectableTarget(hit.object);
+  if (!resolved) {
+    infoPanel.innerText = 'Bagian ini tidak interaktif. Klik hanya part penting yang sudah didaftarkan.';
+    return;
+  }
+
+  selectObject(resolved.target, resolved.part);
 });
+
+window.addEventListener('pointermove', updateSunDrag);
+window.addEventListener('pointerup', endSunDrag);
+window.addEventListener('pointercancel', endSunDrag);
 
 // Orbit ISS
 let angle = 0;
@@ -859,6 +1326,7 @@ function animate() {
 
   // Rotasi bumi
   earth.rotation.y += 0.001;
+  syncSunLight();
   updateEarthNightLighting();
 
   sunTimeUniform.value = sunClock.getElapsedTime();
@@ -876,6 +1344,15 @@ function animate() {
     issOrbit.position.z = Math.sin(angle) * 4;
   }
 
+  if (issFollowEnabled && iss) {
+    issFollowDelta.subVectors(issOrbit.position, issFollowPrev);
+    if (issFollowDelta.lengthSq() > 0) {
+      camera.position.add(issFollowDelta);
+      controls.target.add(issFollowDelta);
+      issFollowPrev.copy(issOrbit.position);
+    }
+  }
+
   if (selectedObject) {
     const pulse = 0.55 + 0.45 * ((Math.sin(glowClock.getElapsedTime() * 6) + 1) * 0.5);
 
@@ -890,6 +1367,8 @@ function animate() {
   controls.update();
 
   syncBackgroundToCamera();
+
+  updateFreecamMovement();
 
   renderer.render(scene, camera);
 }
