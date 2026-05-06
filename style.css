@@ -115,8 +115,12 @@ canvas {
   border: 1px solid rgba(148, 163, 184, 0.25);
   border-radius: 10px;
   background: rgba(15, 23, 42, 0.6);
-  display: grid;
+  display: none;
   gap: 10px;
+}
+
+#sunControls.visible {
+  display: grid;
 }
 
 #sunControls label {
@@ -138,6 +142,19 @@ canvas {
 }
 
 #sunScale {
+  width: 100%;
+  accent-color: #38bdf8;
+}
+
+#sunIntensityValue {
+  color: #e2e8f0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+#sunIntensity {
   width: 100%;
   accent-color: #38bdf8;
 }

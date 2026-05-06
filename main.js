@@ -381,16 +381,26 @@ if (!backgroundToggle && hud) {
 }
 const componentHint = document.getElementById('componentHint');
 const componentName = document.getElementById('componentName');
-const componentPath = document.getElementById('componentPath');
 const componentDescription = document.getElementById('componentDescription');
 const sunScale = document.getElementById('sunScale');
 const sunScaleValue = document.getElementById('sunScaleValue');
+const sunIntensity = document.getElementById('sunIntensity');
+const sunIntensityValue = document.getElementById('sunIntensityValue');
 const sunMoveToggle = document.getElementById('sunMoveToggle');
 const sunResetButton = document.getElementById('sunResetButton');
+const sunControls = document.getElementById('sunControls');
 
 // Sidebar elements and controls (closed by default)
 const sidebar = document.getElementById('sidebar');
 const sidebarHandle = document.getElementById('sidebarHandle');
+
+function showSunControls() {
+  if (sunControls) sunControls.classList.add('visible');
+}
+
+function hideSunControls() {
+  if (sunControls) sunControls.classList.remove('visible');
+}
 
 let sunMoveEnabled = false;
 let sunDragging = false;
@@ -402,6 +412,9 @@ const sunDragNormal = new THREE.Vector3();
 const sunScaleDefault = 1;
 const sunScaleMin = 0.2;
 const sunScaleMax = 5;
+const sunIntensityDefault = 1.1;
+const sunIntensityMin = 0.1;
+const sunIntensityMax = 3;
 
 function formatSunScale(value) {
   return `${value.toFixed(1)}x`;
@@ -413,6 +426,14 @@ function setSunScale(value) {
 
   sunGroup.scale.setScalar(scale);
   if (sunScaleValue) sunScaleValue.textContent = formatSunScale(scale);
+}
+
+function setSunIntensity(value) {
+  const intensity = Number(value);
+  if (!Number.isFinite(intensity)) return;
+
+  light.intensity = intensity;
+  if (sunIntensityValue) sunIntensityValue.textContent = `${intensity.toFixed(1)}x`;
 }
 
 function setSunMoveEnabled(enabled) {
@@ -437,6 +458,16 @@ function resetSunPosition() {
   sunGroup.position.copy(sunHomePosition);
   syncSunLight();
   updateEarthNightLighting();
+  
+  // Reset sliders
+  if (sunScale) {
+    sunScale.value = String(sunScaleDefault);
+    setSunScale(sunScaleDefault);
+  }
+  if (sunIntensity) {
+    sunIntensity.value = String(sunIntensityDefault);
+    setSunIntensity(sunIntensityDefault);
+  }
 }
 
 if (sunScale) {
@@ -446,6 +477,16 @@ if (sunScale) {
   sunScale.value = String(sunScaleDefault);
   sunScale.addEventListener('input', (event) => {
     setSunScale(event.target.value);
+  });
+}
+
+if (sunIntensity) {
+  sunIntensity.min = String(sunIntensityMin);
+  sunIntensity.max = String(sunIntensityMax);
+  sunIntensity.step = '0.1';
+  sunIntensity.value = String(sunIntensityDefault);
+  sunIntensity.addEventListener('input', (event) => {
+    setSunIntensity(event.target.value);
   });
 }
 
@@ -468,6 +509,7 @@ if (sunResetButton) {
 }
 
 setSunScale(sunScaleDefault);
+setSunIntensity(sunIntensityDefault);
 
 function openSidebar() {
   if (!sidebar) return;
@@ -794,8 +836,8 @@ prefersReducedMotion.addEventListener('change', (event) => {
 function setSidebarEmpty(hintText = 'Pilih komponen ISS atau klik matahari untuk kontrol.') {
   if (componentHint) componentHint.innerText = hintText;
   if (componentName) componentName.innerText = '-';
-  if (componentPath) componentPath.innerText = '-';
   if (componentDescription) componentDescription.innerText = '-';
+  hideSunControls();
 }
 
 function cloneMaterialIfPossible(material) {
@@ -904,33 +946,20 @@ function traverseSelectionRoot(root, selectedPart, onMesh) {
   }
 }
 
-function getObjectPath(target, root) {
-  const nodes = [];
-  let current = target;
-
-  while (current) {
-    nodes.push(current.name || current.type);
-    if (current === root) break;
-    current = current.parent;
-  }
-
-  return nodes.reverse().join(' > ');
-}
-
 function updateSidebarForObject(target, part) {
   if (componentHint) componentHint.innerText = 'Komponen terpilih';
   if (componentName) componentName.innerText = target.name || 'Tanpa nama';
-  if (componentPath) componentPath.innerText = getObjectPath(target, iss);
   if (componentDescription) componentDescription.innerText = part.description;
+  hideSunControls();
 }
 
 function setSidebarForSun() {
   if (componentHint) componentHint.innerText = 'Matahari terpilih';
   if (componentName) componentName.innerText = 'Matahari';
-  if (componentPath) componentPath.innerText = 'Matahari';
   if (componentDescription) {
     componentDescription.innerText = 'Gunakan slider Matahari di atas untuk ubah ukuran (0.2x-5.0x) atau aktifkan Pindah Matahari untuk memindahkan posisi.';
   }
+  showSunControls();
 }
 
 function clearSelection() {
