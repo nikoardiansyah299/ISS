@@ -3,6 +3,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { earthNightVertexShader, earthNightFragmentShader } from './shader/earthNightShader.js';
+import { sunVertexShader, sunFragmentShader } from './shader/sunShader.js';
 
 // Scene
 const scene = new THREE.Scene();
@@ -174,30 +176,8 @@ const earthNightMaterial = new THREE.ShaderMaterial({
     lightDirection: { value: new THREE.Vector3() },
     intensity: { value: 1.0 },
   },
-  vertexShader: `
-    varying vec2 vUv;
-    varying float vNight;
-    uniform vec3 lightDirection;
-
-    void main() {
-      vUv = uv;
-      vec3 worldNormal = normalize(mat3(modelMatrix) * normal);
-      float dotNL = dot(worldNormal, normalize(lightDirection));
-      vNight = smoothstep(0.0, 0.25, -dotNL);
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    }
-  `,
-  fragmentShader: `
-    uniform sampler2D nightMap;
-    uniform float intensity;
-    varying vec2 vUv;
-    varying float vNight;
-
-    void main() {
-      vec3 color = texture2D(nightMap, vUv).rgb * intensity;
-      gl_FragColor = vec4(color * vNight, vNight);
-    }
-  `,
+  vertexShader: earthNightVertexShader,
+  fragmentShader: earthNightFragmentShader,
   transparent: true,
   depthWrite: false,
   blending: THREE.AdditiveBlending,
@@ -218,48 +198,6 @@ const earthClouds = new THREE.Mesh(cloudGeometry, cloudMaterial);
 earthClouds.renderOrder = 2;
 earth.add(earthClouds);
 scene.add(earth);
-
-const sunVertexShader = `
-  varying vec2 vUv;
-
-  void main() {
-    vUv = uv;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }
-`;
-
-const sunFragmentShader = `
-  uniform sampler2D uTexture;
-  uniform vec3 uInnerColor;
-  uniform vec3 uOuterColor;
-  uniform float uIntensity;
-  uniform float uTime;
-  uniform float uUseTexture;
-  uniform float uAlpha;
-  uniform float uCorona;
-
-  varying vec2 vUv;
-
-  void main() {
-    vec2 centered = vUv - 0.5;
-    float r = length(centered) * 2.0;
-    float grad = smoothstep(0.0, 1.0, r);
-    float ripple = 0.015 * sin(10.0 * r - uTime * 1.2);
-    grad = clamp(grad + ripple, 0.0, 1.0);
-
-    vec3 color = mix(uInnerColor, uOuterColor, grad);
-    vec3 tex = texture2D(uTexture, vUv).rgb;
-    color = mix(color, color * (0.75 + tex.r * 0.6), uUseTexture);
-
-    float edge = smoothstep(0.25, 1.0, r);
-    float fade = 1.0 - smoothstep(0.7, 1.0, r);
-    float coronaAlpha = edge * fade;
-    float alpha = mix(1.0, coronaAlpha, uCorona) * uAlpha;
-
-    gl_FragColor = vec4(color * uIntensity, alpha);
-  }
-`;
-
 const sunTimeUniform = { value: 0 };
 const sunTextureUniform = { value: sunMap };
 const sunRadius = 1.6;
@@ -389,6 +327,8 @@ const sunIntensityValue = document.getElementById('sunIntensityValue');
 const sunMoveToggle = document.getElementById('sunMoveToggle');
 const sunResetButton = document.getElementById('sunResetButton');
 const sunControls = document.getElementById('sunControls');
+const attribution = document.getElementById('attribution');
+const attributionHandle = document.getElementById('attributionHandle');
 
 // Sidebar elements and controls (closed by default)
 const sidebar = document.getElementById('sidebar');
@@ -529,8 +469,26 @@ function toggleSidebar() {
   sidebar.setAttribute('aria-hidden', sidebar.classList.contains('open') ? 'false' : 'true');
 }
 
+function setAttributionCollapsed(collapsed) {
+  if (!attribution || !attributionHandle) return;
+
+  attribution.classList.toggle('collapsed', collapsed);
+  attributionHandle.setAttribute('aria-expanded', String(!collapsed));
+  attributionHandle.setAttribute(
+    'aria-label',
+    collapsed ? 'Tampilkan sumber & atribusi' : 'Sembunyikan sumber & atribusi'
+  );
+}
+
 if (sidebar) closeSidebar();
 if (sidebarHandle) sidebarHandle.addEventListener('click', toggleSidebar);
+if (attributionHandle) {
+  attributionHandle.addEventListener('click', () => {
+    if (!attribution) return;
+    setAttributionCollapsed(!attribution.classList.contains('collapsed'));
+  });
+  setAttributionCollapsed(false);
+}
 
 // Camera mode controls
 const cameraEarthBtn = document.getElementById('cameraEarth');
@@ -687,102 +645,119 @@ const phongMaterialCache = new Map();
 const ISS_PARTS = [
   {
     id: 'panel-surya',
+    displayName: 'Panel Surya',
     category: 'Panel Surya',
     names: ['panel surya'],
     description: 'Panel surya ISS adalah sumber listrik utama yang mengubah cahaya matahari menjadi energi listrik. Energi ini disalurkan ke baterai dan sistem utama seperti kendali termal, komputer, komunikasi, dan eksperimen. Orientasi panel terus diatur agar daya tetap stabil di berbagai kondisi orbit.\n\nSejak awal pembangunan ISS, panel surya dipasang bertahap bersama segmen truss untuk menambah kapasitas daya. Konfigurasi panel berkembang selama era Space Shuttle untuk meningkatkan keluaran listrik dan umur operasi. Panel-panel ini menjadi ciri visual paling khas dari ISS.',
   },
   {
     id: 'p4-truss',
+    displayName: 'P4 Truss',
     category: 'Struktur Truss',
     names: ['20 P4 Truss_01', '20 P4 Truss_02'],
     description: 'Segmen P4 adalah bagian truss di sisi port yang membawa jalur distribusi daya, struktur penyangga panel, dan titik sambung peralatan eksternal. Ia menjadi penghubung penting antara rangka utama dan perangkat tenaga di sisi kiri ISS.\n\nP4 dipasang pada 2000 dalam rangkaian misi pembangunan awal ISS. Kehadirannya memperpanjang tulang punggung struktural stasiun dan menyiapkan jalur untuk panel surya besar di sisi port.',
   },
   {
     id: 'p6-truss',
+    displayName: 'P6 Truss',
     category: 'Struktur Truss',
     names: ['08 P6 Truss_01', '08 P6 Truss_02'],
     description: 'Segmen P6 berada di ujung sisi port dan menampung panel surya besar serta sistem listrik terkait. Segmen ini juga membawa struktur pendukung yang menjaga panel tetap stabil saat ISS bermanuver.\n\nP6 merupakan salah satu segmen awal yang membawa panel surya besar untuk tahap awal operasi ISS. Segmen ini pernah diposisikan sementara di atas struktur tengah sebelum dipindahkan ke lokasi permanen saat truss lengkap.',
   },
   {
     id: 's4-truss',
+    displayName: 'S4 Truss',
     category: 'Struktur Truss',
     names: ['23 S4 Truss_01', '23 S4 Truss_02'],
     description: 'Segmen S4 adalah bagian truss di sisi starboard yang membawa panel surya dan jalur distribusi daya ke sisi kanan stasiun. Struktur ini menjaga keseimbangan daya antara kedua sisi ISS.\n\nS4 dipasang pada 2002 ketika ISS berkembang menjadi kompleks yang lebih besar. Kehadirannya menambah kapasitas listrik dan memperpanjang kemampuan operasi stasiun.',
   },
   {
     id: 's6-truss',
+    displayName: 'S6 Truss',
     category: 'Struktur Truss',
     names: ['32 S6 Truss_01', '32 S6 Truss_02'],
     description: 'Segmen S6 berada di ujung sisi starboard dan menampung panel surya tambahan serta struktur pendukungnya. Segmen ini melengkapi distribusi daya pada sisi kanan ISS.\n\nS6 dipasang pada 2009 sebagai salah satu segmen terakhir dari rangkaian truss utama. Dengan pemasangan ini, kapasitas daya ISS mencapai konfigurasi puncaknya.',
   },
   {
     id: 'zarya',
+    displayName: 'Zarya',
     category: 'Modul Inti',
     names: ['zarya', '01 Zarya - (FGB) Funtional Cargo Block'],
     description: 'Zarya (FGB) adalah modul pertama ISS yang menyediakan daya awal, kontrol orientasi sementara, serta ruang penyimpanan. Modul ini juga menjadi titik docking awal untuk rangkaian perakitan stasiun.\n\nDiluncurkan pada 1998 sebagai kerja sama Amerika Serikat dan Rusia, Zarya menjadi fondasi awal perakitan ISS. Keberadaannya memungkinkan modul berikutnya berlabuh dan memulai operasi awal stasiun.',
   },
   {
     id: 'zvezda',
+    displayName: 'Zvezda',
     category: 'Modul Inti',
     names: ['zvezda', '05 Zvezda (SM) Service Module'],
     description: 'Zvezda adalah Service Module yang menyediakan sistem pendukung kehidupan, ruang tinggal, dan kemampuan propulsi utama. Modul ini menjadi pusat operasi harian kru untuk jangka panjang.\n\nDiluncurkan pada 2000, Zvezda menandai transisi ISS menjadi stasiun yang dapat dihuni terus-menerus. Modul ini menjadi tulang punggung segmen Rusia dan memperkuat kemampuan bertahan di orbit.',
   },
   {
     id: 'destiny',
+    displayName: 'Destiny',
     category: 'Modul Inti',
     names: ['destiny', '09 Destiny Space Laboratory'],
     description: 'Destiny adalah laboratorium utama Amerika Serikat untuk riset mikrogravitasi. Di dalamnya, kru melakukan eksperimen biologi, fisika, dan pengembangan teknologi ruang angkasa.\n\nDiluncurkan pada 2001, Destiny menjadi pusat penelitian jangka panjang dan salah satu pilar ilmiah ISS. Modul ini memperluas kapasitas eksperimen internasional di orbit.',
   },
   {
     id: 'harmony',
+    displayName: 'Harmony',
     category: 'Modul Inti',
     names: ['harmony', '26 Harmony Node 2'],
     description: 'Harmony adalah node penghubung yang menyatukan beberapa modul besar dan menyediakan jalur utilitas di antaranya. Modul ini memastikan aliran daya, data, dan udara tetap konsisten di antara segmen ISS.\n\nDiluncurkan pada 2007, Harmony membuka ruang untuk pemasangan Columbus dan Kibo. Node ini memperluas area riset internasional dan memperkuat struktur internal stasiun.',
   },
   {
     id: 'columbus',
+    displayName: 'Columbus',
     category: 'Modul Inti',
     names: ['colombus', '27 Columbus Space Laboratory'],
     description: 'Columbus adalah laboratorium milik ESA yang fokus pada eksperimen sains dan teknologi di mikrogravitasi. Modul ini menyediakan rak eksperimen dan fasilitas pemantauan modern.\n\nDiluncurkan pada 2008, Columbus memperkuat kontribusi Eropa dan menambah kapasitas riset ISS. Kehadirannya menandai babak baru kolaborasi ilmiah lintas negara.',
   },
   {
     id: 'kibo-pressurized-module',
+    displayName: 'Kibo Pressurized Module',
     category: 'Modul Inti',
     names: ['30 Kibo Space Laboratory (PSM) Pressurized Module'],
     description: 'Modul Pressurized Kibo adalah laboratorium utama Jepang dengan fasilitas eksperimen di lingkungan bertekanan. Di sini kru menjalankan penelitian biologi dan teknologi yang membutuhkan ruang tertutup stabil.\n\nDiluncurkan pada 2008, modul ini memperluas kemampuan penelitian JAXA dan memperkuat kerja sama internasional. Kibo menjadi salah satu laboratorium terbesar di ISS.',
   },
   {
     id: 'kibo-stowage',
+    displayName: 'Kibo Stowage Module',
     category: 'Modul Inti',
     names: ['28 Kibo Space Laboratory (PSM) Pressurized Stowage Module'],
     description: 'Pressurized Stowage Module Kibo menyediakan ruang penyimpanan bertekanan untuk peralatan, sampel, dan logistik eksperimen. Modul ini membantu menjaga alur kerja laboratorium tetap rapi dan efisien.\n\nDiluncurkan pada 2008, modul ini mendukung operasi Kibo dengan kapasitas penyimpanan yang lebih terorganisir. Ini memperpanjang durasi eksperimen tanpa sering menambah kargo baru.',
   },
   {
     id: 'kibo-exposed-platform',
+    displayName: 'Kibo Exposed Platform',
     category: 'Modul Inti',
     names: ['33 Kibo Space Laboratory Exposed Platform'],
     description: 'Exposed Platform Kibo adalah area eksperimen eksternal untuk pengujian material dan instrumen yang terpapar langsung ke ruang angkasa. Platform ini memungkinkan penelitian yang tidak bisa dilakukan di dalam modul bertekanan.\n\nDiposisikan pada 2009, platform ini memungkinkan eksperimen jangka panjang di lingkungan luar ISS. Fasilitas ini menjadi salah satu kontribusi unik Jepang pada ISS.',
   },
   {
     id: 'kibo',
+    displayName: 'Kibo',
     category: 'Modul Inti',
     names: ['kibo'],
     description: 'Kibo adalah kompleks laboratorium Jepang di ISS yang terdiri dari modul bertekanan, modul penyimpanan, dan platform eksperimen luar. Fasilitas ini memungkinkan penelitian sains dan teknologi yang membutuhkan ruang kerja stabil sekaligus akses ke lingkungan luar ruang angkasa.\n\nKibo dirakit dan dioperasikan bertahap pada 2008-2009 sebagai kontribusi utama JAXA. Sejak itu, Kibo menjadi salah satu pusat penelitian paling aktif di ISS dan memperluas kolaborasi ilmiah internasional.',
   },
   {
     id: 'unity',
+    displayName: 'Unity',
     category: 'Modul Inti',
     names: ['unity', '02 Unity Node 1'],
     description: 'Unity adalah node penghubung pertama milik Amerika Serikat yang menyatukan modul-modul awal ISS. Modul ini menjaga aliran daya, data, dan udara antarsegmen.\n\nDiluncurkan pada 1998, Unity menjadi titik pertemuan awal antara segmen Amerika dan Rusia. Perannya krusial dalam tahap perakitan awal ISS.',
   },
   {
     id: 'quest-airlock',
+    displayName: 'Quest Airlock',
     category: 'Docking/Airlock',
     names: ['airlock', '12 Quest Airlock'],
     description: 'Quest Airlock adalah pintu utama untuk aktivitas EVA, tempat astronaut menyiapkan diri keluar masuk stasiun. Sistem airlock mengatur tekanan agar transisi ke vakum berlangsung aman.\n\nDiluncurkan pada 2001, Quest menjadi airlock khusus Amerika Serikat. Modul ini mempercepat operasi pemeliharaan eksternal dan mendukung banyak misi perbaikan.',
   },
   {
     id: 'tranquility',
+    displayName: 'Tranquility',
     category: 'Modul Inti',
     names: ['traunquility', '37 Tranquility Node 3'],
     description: 'Tranquility menampung sistem penunjang kehidupan, kontrol lingkungan, dan koneksi ke Cupola. Modul ini membantu menjaga kualitas udara, air, dan kenyamanan kru.\n\nDiluncurkan pada 2010, Tranquility meningkatkan kemampuan hidup jangka panjang di ISS. Modul ini juga memperkuat area observasi dan pengawasan Bumi.',
@@ -921,6 +896,23 @@ function resolveSelectableTarget(meshObject) {
   return null;
 }
 
+function formatReadableName(name) {
+  if (!name) return 'Tanpa nama';
+
+  return String(name)
+    .replace(/_/g, ' ')
+    .replace(/\s*-\s*/g, ' ')
+    .replace(/\(.*?\)/g, '')
+    .replace(/^\d+\s*/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getReadablePartName(target, part) {
+  if (part && part.displayName) return part.displayName;
+  return formatReadableName(target?.name);
+}
+
 function traverseSelectionRoot(root, selectedPart, onMesh) {
   const stack = [root];
 
@@ -947,8 +939,9 @@ function traverseSelectionRoot(root, selectedPart, onMesh) {
 }
 
 function updateSidebarForObject(target, part) {
+  const displayName = getReadablePartName(target, part);
   if (componentHint) componentHint.innerText = 'Komponen terpilih';
-  if (componentName) componentName.innerText = target.name || 'Tanpa nama';
+  if (componentName) componentName.innerText = displayName;
   if (componentDescription) componentDescription.innerText = part.description;
   hideSunControls();
 }
@@ -1021,7 +1014,7 @@ function selectObject(target, part) {
   });
 
   updateSidebarForObject(target, part);
-  infoPanel.innerText = `${part.category}: ${target.name || target.type}`;
+  infoPanel.innerText = `${part.category}: ${getReadablePartName(target, part)}`;
   // open sidebar when user selects a component
   openSidebar();
 }

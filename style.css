@@ -36,6 +36,90 @@ canvas {
   max-width: 260px;
 }
 
+#attribution {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  z-index: 20;
+  max-width: 300px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.72);
+  color: #e2e8f0;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 12px 30px rgba(2, 6, 23, 0.35);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  display: grid;
+  gap: 8px;
+}
+
+#attributionBody {
+  display: grid;
+  gap: 6px;
+}
+
+.attribution-handle {
+  position: absolute;
+  top: -12px;
+  right: -12px;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: rgba(14, 20, 30, 0.9);
+  color: #e2e8f0;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  font-weight: 700;
+  box-shadow: 0 8px 18px rgba(2, 6, 23, 0.4);
+}
+
+.attribution-handle:hover {
+  background: rgba(20, 30, 45, 0.95);
+}
+
+#attribution h3 {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  color: #67e8f9;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+#attribution ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+#attribution li {
+  margin: 0;
+}
+
+#attribution a {
+  color: #7dd3fc;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+#attribution a:hover {
+  color: #bae6fd;
+}
+
+#attribution.collapsed {
+  max-width: 52px;
+  padding: 12px;
+}
+
+#attribution.collapsed #attributionBody {
+  display: none;
+}
+
 #orbitToggle,
 #shaderToggle,
 #backgroundToggle {
@@ -222,6 +306,14 @@ canvas {
 
   #sidebar.open {
     transform: translateY(0);
+  }
+}
+
+@media (max-width: 900px) {
+  #attribution {
+    left: 12px;
+    bottom: 12px;
+    max-width: min(92vw, 320px);
   }
 }
 
