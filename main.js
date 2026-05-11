@@ -158,6 +158,8 @@ const earthNormalMap = loadEarthTexture('./image/normal_bumi.jpg', THREE.NoColor
 const earthSpecularMap = loadEarthTexture('./image/specular_bumi.jpg', THREE.NoColorSpace);
 const earthCloudMap = loadEarthTexture('./image/cloud_bumi.jpg', THREE.SRGBColorSpace);
 const sunMap = loadEarthTexture('./image/matahari.jpg', THREE.SRGBColorSpace);
+const MAX_SUN_LIGHTS = 16;
+const sunLightDirections = Array.from({ length: MAX_SUN_LIGHTS }, () => new THREE.Vector3());
 
 const earthGeometry = new THREE.SphereGeometry(2.6, 64, 64);
 const earthMaterial = new THREE.MeshPhysicalMaterial({
@@ -173,7 +175,8 @@ const earthNightGeometry = new THREE.SphereGeometry(2.601, 64, 64);
 const earthNightMaterial = new THREE.ShaderMaterial({
   uniforms: {
     nightMap: { value: earthNightMap },
-    lightDirection: { value: new THREE.Vector3() },
+    lightDirections: { value: sunLightDirections },
+    lightCount: { value: 1 },
     intensity: { value: 1.0 },
   },
   vertexShader: earthNightVertexShader,
@@ -242,47 +245,120 @@ const sunCoronaMaterial = new THREE.ShaderMaterial({
 });
 sunCoronaMaterial.toneMapped = false;
 
-const sunGroup = new THREE.Group();
-const sunCore = new THREE.Mesh(sunGeometry, sunCoreMaterial);
-const sunCorona = new THREE.Mesh(sunCoronaGeometry, sunCoronaMaterial);
-sunCore.renderOrder = 3;
-sunCorona.renderOrder = 4;
-sunCore.userData.skipShading = true;
-sunCorona.userData.skipShading = true;
-sunGroup.add(sunCore, sunCorona);
+const sunGroups = [];
+const sunGroupSet = new Set();
+const sunHomePositions = new Map();
+const sunLights = [];
+const sunLightMap = new Map();
+let activeSunGroup = null;
+let selectedSunGroup = null;
+let sunIdCounter = 1;
+
+function createSunGroup() {
+  const group = new THREE.Group();
+  const core = new THREE.Mesh(sunGeometry, sunCoreMaterial);
+  const corona = new THREE.Mesh(sunCoronaGeometry, sunCoronaMaterial);
+  core.renderOrder = 3;
+  corona.renderOrder = 4;
+  core.userData.skipShading = true;
+  corona.userData.skipShading = true;
+  group.add(core, corona);
+  return group;
+}
+
+function registerSunGroup(group, homePosition) {
+  if (!group.userData.sunId) {
+    group.userData.sunId = sunIdCounter;
+    sunIdCounter += 1;
+  }
+
+  sunGroups.push(group);
+  sunGroupSet.add(group);
+  sunHomePositions.set(group, homePosition.clone());
+}
+
+function registerSunLight(group, lightSource) {
+  if (!group || !lightSource) return;
+  sunLights.push(lightSource);
+  sunLightMap.set(group, lightSource);
+}
+
+function createSunLightForGroup(group) {
+  if (!group) return null;
+
+  const lightSource = new THREE.DirectionalLight(0xffffff, light.intensity);
+  lightSource.position.copy(group.position);
+  scene.add(lightSource);
+  scene.add(lightSource.target);
+  registerSunLight(group, lightSource);
+  return lightSource;
+}
+
+function getSunDisplayName(group) {
+  if (!group || !group.userData || !group.userData.sunId) return 'Matahari';
+  return group.userData.sunId === 1 ? 'Matahari' : `Matahari ${group.userData.sunId}`;
+}
+
+const sunGroup = createSunGroup();
 sunGroup.position.set(12, 6, -10);
 scene.add(sunGroup);
-
-const sunHomePosition = sunGroup.position.clone();
+registerSunGroup(sunGroup, sunGroup.position);
+registerSunLight(sunGroup, light);
+activeSunGroup = sunGroup;
 
 function syncSunLight() {
-  light.position.copy(sunGroup.position);
-  if (earth) {
-    light.target.position.copy(earth.position);
-  } else {
-    light.target.position.set(0, 0, 0);
+  if (!sunGroups.length) return;
+
+  for (const group of sunGroups) {
+    const sunLight = sunLightMap.get(group);
+    if (!sunLight) continue;
+
+    sunLight.position.copy(group.position);
+    if (earth) {
+      sunLight.target.position.copy(earth.position);
+    } else {
+      sunLight.target.position.set(0, 0, 0);
+    }
+    sunLight.target.updateMatrixWorld();
   }
-  light.target.updateMatrixWorld();
 }
 
 syncSunLight();
 
-function isSunObject(object) {
+function getSunRootFromObject(object) {
   let current = object;
   while (current) {
-    if (current === sunGroup) return true;
+    if (sunGroupSet.has(current)) return current;
     current = current.parent;
   }
-  return false;
+  return null;
 }
 
 const earthLightTarget = new THREE.Vector3();
-const earthLightDirection = new THREE.Vector3();
 
 function updateEarthNightLighting() {
-  light.target.getWorldPosition(earthLightTarget);
-  earthLightDirection.copy(light.position).sub(earthLightTarget).normalize();
-  earthNightMaterial.uniforms.lightDirection.value.copy(earthLightDirection);
+  if (earth) {
+    earth.getWorldPosition(earthLightTarget);
+  } else {
+    earthLightTarget.set(0, 0, 0);
+  }
+
+  const lightCount = Math.min(sunGroups.length, MAX_SUN_LIGHTS);
+  for (let i = 0; i < MAX_SUN_LIGHTS; i += 1) {
+    if (i < lightCount) {
+      const group = sunGroups[i];
+      const sunLight = sunLightMap.get(group);
+      if (sunLight) {
+        sunLightDirections[i].copy(sunLight.position).sub(earthLightTarget).normalize();
+      } else {
+        sunLightDirections[i].set(0, 0, 1);
+      }
+    } else {
+      sunLightDirections[i].set(0, 0, 1);
+    }
+  }
+
+  earthNightMaterial.uniforms.lightCount.value = lightCount;
 }
 
 // ISS
@@ -326,6 +402,7 @@ const sunIntensity = document.getElementById('sunIntensity');
 const sunIntensityValue = document.getElementById('sunIntensityValue');
 const sunMoveToggle = document.getElementById('sunMoveToggle');
 const sunResetButton = document.getElementById('sunResetButton');
+const sunAddButton = document.getElementById('sunAddButton');
 const sunControls = document.getElementById('sunControls');
 const attribution = document.getElementById('attribution');
 const attributionHandle = document.getElementById('attributionHandle');
@@ -344,6 +421,7 @@ function hideSunControls() {
 
 let sunMoveEnabled = false;
 let sunDragging = false;
+let sunDragGroup = null;
 const sunDragPlane = new THREE.Plane();
 const sunDragPoint = new THREE.Vector3();
 const sunDragOffset = new THREE.Vector3();
@@ -360,12 +438,36 @@ function formatSunScale(value) {
   return `${value.toFixed(1)}x`;
 }
 
+function updateSunScaleValue(scale) {
+  if (sunScaleValue) sunScaleValue.textContent = formatSunScale(scale);
+}
+
+function setSunScaleForGroup(group, value) {
+  if (!group) return;
+  group.scale.setScalar(value);
+}
+
+function syncSunControlsForGroup(group) {
+  if (!group) return;
+  const currentScale = Number(group.scale?.x ?? sunScaleDefault);
+  if (sunScale) sunScale.value = currentScale.toFixed(1);
+  updateSunScaleValue(currentScale);
+}
+
+function setActiveSunGroup(group) {
+  if (!group) return;
+  activeSunGroup = group;
+  syncSunControlsForGroup(group);
+  syncSunLight();
+}
+
 function setSunScale(value) {
   const scale = Number(value);
   if (!Number.isFinite(scale)) return;
 
-  sunGroup.scale.setScalar(scale);
-  if (sunScaleValue) sunScaleValue.textContent = formatSunScale(scale);
+  const targetGroup = activeSunGroup || sunGroup;
+  setSunScaleForGroup(targetGroup, scale);
+  updateSunScaleValue(scale);
 }
 
 function setSunIntensity(value) {
@@ -373,6 +475,9 @@ function setSunIntensity(value) {
   if (!Number.isFinite(intensity)) return;
 
   light.intensity = intensity;
+  for (const sunLight of sunLights) {
+    sunLight.intensity = intensity;
+  }
   if (sunIntensityValue) sunIntensityValue.textContent = `${intensity.toFixed(1)}x`;
 }
 
@@ -394,19 +499,54 @@ function setSunMoveEnabled(enabled) {
   }
 }
 
-function resetSunPosition() {
-  sunGroup.position.copy(sunHomePosition);
+function resetSunPosition(targetGroup = activeSunGroup || sunGroup) {
+  if (!targetGroup) return;
+
+  const homePosition = sunHomePositions.get(targetGroup);
+  if (homePosition) {
+    targetGroup.position.copy(homePosition);
+  }
+
   syncSunLight();
   updateEarthNightLighting();
-  
+  setSunScaleForGroup(targetGroup, sunScaleDefault);
+
   // Reset sliders
   if (sunScale) {
     sunScale.value = String(sunScaleDefault);
-    setSunScale(sunScaleDefault);
+    updateSunScaleValue(sunScaleDefault);
   }
   if (sunIntensity) {
     sunIntensity.value = String(sunIntensityDefault);
     setSunIntensity(sunIntensityDefault);
+  }
+}
+
+function getSunSpawnPosition() {
+  const direction = new THREE.Vector3();
+  camera.getWorldDirection(direction);
+  const targetDistance = controls?.target
+    ? camera.position.distanceTo(controls.target)
+    : 8;
+  const distance = Math.min(Math.max(targetDistance, 4), 20);
+  return camera.position.clone().add(direction.multiplyScalar(distance));
+}
+
+function addSunCopy() {
+  const newSun = createSunGroup();
+  const spawnPosition = getSunSpawnPosition();
+  newSun.position.copy(spawnPosition);
+  newSun.scale.setScalar(sunScaleDefault);
+  scene.add(newSun);
+  registerSunGroup(newSun, spawnPosition);
+  createSunLightForGroup(newSun);
+  setActiveSunGroup(newSun);
+  selectedSunGroup = newSun;
+  setSidebarForSun(newSun);
+  openSidebar();
+
+  if (infoPanel) {
+    infoPanel.innerText = `${getSunDisplayName(newSun)} ditambahkan.`;
   }
 }
 
@@ -445,6 +585,12 @@ if (sunResetButton) {
   sunResetButton.addEventListener('click', () => {
     resetSunPosition();
     if (infoPanel) infoPanel.innerText = 'Posisi matahari dikembalikan.';
+  });
+}
+
+if (sunAddButton) {
+  sunAddButton.addEventListener('click', () => {
+    addSunCopy();
   });
 }
 
@@ -565,7 +711,8 @@ function setCameraMode(mode) {
   } else if (mode === 'iss' && iss) {
     focusCameraOn(issOrbit.position, 5, 800, 'iss', enableISSFollow);
   } else if (mode === 'sun') {
-    focusCameraOn(sunGroup.position, 5, 800, 'sun');
+    const sunTarget = activeSunGroup || sunGroup;
+    if (sunTarget) focusCameraOn(sunTarget.position, 5, 800, 'sun');
   } else if (mode === 'freecam') {
     currentCameraMode = 'freecam';
     updateCameraModeButton('freecam');
@@ -812,6 +959,7 @@ function setSidebarEmpty(hintText = 'Pilih komponen ISS atau klik matahari untuk
   if (componentHint) componentHint.innerText = hintText;
   if (componentName) componentName.innerText = '-';
   if (componentDescription) componentDescription.innerText = '-';
+  selectedSunGroup = null;
   hideSunControls();
 }
 
@@ -940,18 +1088,21 @@ function traverseSelectionRoot(root, selectedPart, onMesh) {
 
 function updateSidebarForObject(target, part) {
   const displayName = getReadablePartName(target, part);
+  selectedSunGroup = null;
   if (componentHint) componentHint.innerText = 'Komponen terpilih';
   if (componentName) componentName.innerText = displayName;
   if (componentDescription) componentDescription.innerText = part.description;
   hideSunControls();
 }
 
-function setSidebarForSun() {
+function setSidebarForSun(group = activeSunGroup || sunGroup) {
+  selectedSunGroup = group || null;
   if (componentHint) componentHint.innerText = 'Matahari terpilih';
-  if (componentName) componentName.innerText = 'Matahari';
+  if (componentName) componentName.innerText = getSunDisplayName(group);
   if (componentDescription) {
-    componentDescription.innerText = 'Gunakan slider Matahari di atas untuk ubah ukuran (0.2x-5.0x) atau aktifkan Pindah Matahari untuk memindahkan posisi.';
+    componentDescription.innerText = 'Gunakan slider Matahari di atas untuk ubah ukuran (0.2x-5.0x), aktifkan Pindah Matahari untuk memindahkan posisi, atau tekan Tambah Matahari untuk menambah salinan di tengah pandangan.';
   }
+  syncSunControlsForGroup(group);
   showSunControls();
 }
 
@@ -1263,33 +1414,35 @@ function updateRayFromEvent(event) {
   raycaster.setFromCamera(mouse, camera);
 }
 
-function beginSunDrag() {
-  if (!sunMoveEnabled || !sunGroup) return false;
+function beginSunDrag(targetGroup = selectedSunGroup || activeSunGroup || sunGroup) {
+  if (!sunMoveEnabled || !targetGroup) return false;
 
   camera.getWorldDirection(sunDragNormal);
-  sunDragPlane.setFromNormalAndCoplanarPoint(sunDragNormal, sunGroup.position);
+  sunDragPlane.setFromNormalAndCoplanarPoint(sunDragNormal, targetGroup.position);
   const hit = raycaster.ray.intersectPlane(sunDragPlane, sunDragPoint);
   if (!hit) return false;
 
-  sunDragOffset.copy(sunGroup.position).sub(sunDragPoint);
+  sunDragOffset.copy(targetGroup.position).sub(sunDragPoint);
+  sunDragGroup = targetGroup;
   sunDragging = true;
   controls.enabled = false;
   return true;
 }
 
 function updateSunDrag(event) {
-  if (!sunDragging) return;
+  if (!sunDragging || !sunDragGroup) return;
   updateRayFromEvent(event);
   const hit = raycaster.ray.intersectPlane(sunDragPlane, sunDragPoint);
   if (!hit) return;
 
-  sunGroup.position.copy(sunDragPoint).add(sunDragOffset);
+  sunDragGroup.position.copy(sunDragPoint).add(sunDragOffset);
   syncSunLight();
 }
 
 function endSunDrag() {
   if (!sunDragging) return;
   sunDragging = false;
+  sunDragGroup = null;
   controls.enabled = true;
 }
 
@@ -1298,7 +1451,7 @@ renderer.domElement.addEventListener('pointerdown', (event) => {
 
   const targets = [];
   if (iss) targets.push(iss);
-  if (sunGroup) targets.push(sunGroup);
+  if (sunGroups.length) targets.push(...sunGroups);
   if (!targets.length) return;
 
   const intersects = raycaster.intersectObjects(targets, true);
@@ -1315,14 +1468,16 @@ renderer.domElement.addEventListener('pointerdown', (event) => {
   const hit = intersects.find((item) => item.object && item.object.isMesh);
   if (!hit) return;
 
-  if (isSunObject(hit.object)) {
+  const sunRoot = getSunRootFromObject(hit.object);
+  if (sunRoot) {
     clearSelection();
-    setSidebarForSun();
+    setActiveSunGroup(sunRoot);
+    setSidebarForSun(sunRoot);
     infoPanel.innerText = sunMoveEnabled
       ? 'Pindah matahari aktif. Seret matahari untuk pindah.'
       : 'Matahari dipilih. Atur ukuran di sidebar.';
     openSidebar();
-    if (sunMoveEnabled) beginSunDrag();
+    if (sunMoveEnabled) beginSunDrag(sunRoot);
     return;
   }
 
@@ -1352,7 +1507,9 @@ function animate() {
   updateEarthNightLighting();
 
   sunTimeUniform.value = sunClock.getElapsedTime();
-  sunGroup.rotation.y += 0.0006;
+  for (const group of sunGroups) {
+    group.rotation.y += 0.0006;
+  }
 
   if (backgroundMotionEnabled) {
     starfield.rotation.y += 0.00012;
